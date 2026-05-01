@@ -15,7 +15,7 @@ class data_converter:
 
         return scaled.flatten(), self.scaler
     
-    def unload_scaled_data(self, data):
+    def reverse_scaled_data(self, data):
         return self.scaler.inverse_transform(data)
     
 def create_sequences( data, lookback):

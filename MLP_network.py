@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
 from utils.data_utils import data_converter, create_sequences
+import matplotlib.pyplot as plt
 
 class MLP(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
@@ -16,27 +17,13 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-def train_model(lookback, data, hidden_size=16, lr=0.001, epochs=50, X_val=None, y_val=None):
+def train_model(lookback, X_train, y_train, X_val, y_val, hidden_size=16, lr=0.001, epochs=50):
 
     model = MLP(input_size=lookback, hidden_size=hidden_size, output_size=1)
     loss_fn = nn.MSELoss()
 
     # adam sounded efficient and good to use in the lecture
     optimizer = optim.Adam(model.parameters(), lr=lr)
-
-    X, y = create_sequences(data, lookback)
-
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y,
-        test_size=0.2,
-        shuffle=False
-    )
-
-    X_train = torch.tensor(X_train, dtype=torch.float32)
-    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
-
-    X_val = torch.tensor(X_val, dtype=torch.float32)
-    y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
 
     for _ in range(epochs):
         model.train()
@@ -65,10 +52,41 @@ if __name__ == "__main__":
     # I guess lookback is enough to use as a hyperparameter to test, learning rate and hidden size could maybe also be tested
     for lookback in [2, 4, 8, 16, 32, 64, 128]:
 
-        val_loss, predictions, targets = train_model(lookback, scaled_values)
+        X, y = create_sequences(scaled_values, lookback)
 
-        preds_original = converter.unload_scaled_data(predictions)
-        targets_original = converter.unload_scaled_data(targets)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y,
+            test_size=0.2,
+            shuffle=False
+        )
+
+        X_train = torch.tensor(X_train, dtype=torch.float32)
+        y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+
+        X_val = torch.tensor(X_val, dtype=torch.float32)
+        y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
+
+        if lookback == 128:  # Just plot for one lookback value to visualize the data
+            y_train_np = y_train.squeeze().numpy()
+            y_val_np = y_val.squeeze().numpy()
+
+            # create x-axis indices
+            train_idx = range(len(y_train_np))
+            val_idx = range(len(y_train_np), len(y_train_np) + len(y_val_np))
+
+            plt.plot(train_idx, y_train_np, label="Train")
+            plt.plot(val_idx, y_val_np, label="Validation")
+
+            plt.title("Train vs Validation Targets")
+            plt.xlabel("Time step")
+            plt.ylabel("Value")
+            plt.legend()
+            plt.show()
+
+        val_loss, predictions, targets = train_model(lookback, X_train, y_train, X_val, y_val)
+
+        preds_original = converter.reverse_scaled_data(predictions)
+        targets_original = converter.reverse_scaled_data(targets)
 
         results.append({
             "lookback": lookback,
