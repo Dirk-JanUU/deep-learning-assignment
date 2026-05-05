@@ -153,11 +153,27 @@ if __name__ == "__main__":
             lr=1e-3, epochs=200, batch_size=32, patience=15,
         )
 
+        #print(history)
 
         # one-step-ahead predictions on validation
         model.eval()
         with torch.no_grad():
             val_preds_scaled = model(X_val).numpy()
+            train_preds = model(X_train)
+            per_sample_loss = functional.mse_loss(train_preds, y_train, reduction='none')
+            per_sample_loss = per_sample_loss.squeeze().numpy()  # shape: (num_samples,)
+
+        fig, (ax1, ax2) = plt.subplots(2, 1,figsize=(10, 7),sharex=True)
+        ax1.plot(y_train.squeeze().numpy(), label="Training Values")
+        ax1.set_title(f"Training Values vs Per-Timestep Loss (Lookback={lookback})")
+        ax1.set_ylabel("Value")
+        ax1.legend()
+        ax2.plot(per_sample_loss, label="Loss", color = "red")
+        ax2.set_xlabel("Timestep")
+        ax2.set_ylabel("Squared Error")
+        ax2.legend()
+        plt.show()
+
         val_targets_scaled = y_val.numpy()
 
         preds_original   = converter.reverse_scaled_data(val_preds_scaled)
