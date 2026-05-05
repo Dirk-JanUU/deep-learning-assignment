@@ -53,9 +53,11 @@ class ConvolutionalNetwork(nn.Module):
 # lr =  learning rate for the gradient descent optimization
 # epochs = number of times the entire training dataset is passed through the model during training
 # batch_size = number of samples processed in one batch
-def train_model(X_train, y_train, X_val, y_val, lr=0.001, epochs=50, batch_size=32):
+def train_model(lookback, X_train, y_train, X_val, y_val,
+                lr=0.001, epochs=50, batch_size=32):
 
     model = ConvolutionalNetwork()
+
     loss_fn = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
@@ -65,25 +67,58 @@ def train_model(X_train, y_train, X_val, y_val, lr=0.001, epochs=50, batch_size=
         shuffle=False
     )
 
+    loss_on_train = []
+    loss_on_val = []
+
     for epoch in range(epochs):
+
         model.train()
 
         for x_batch, y_batch in train_loader:
             optimizer.zero_grad()
-
             preds = model(x_batch)
             loss = loss_fn(preds, y_batch)
-
             loss.backward()
             optimizer.step()
+
+        model.eval()
+
+        with torch.no_grad():
+
+            train_preds = model(X_train)
+            val_preds = model(X_val)
+
+            train_loss = loss_fn(train_preds, y_train)
+            val_loss = loss_fn(val_preds, y_val)
+
+            loss_on_train.append(train_loss.item())
+            loss_on_val.append(val_loss.item())
 
     model.eval()
 
     with torch.no_grad():
-        val_preds = model(X_val)
-        val_loss = loss_fn(val_preds, y_val)
+        exo_val_preds = model(X_val)
+        exo_val_loss = loss_fn(exo_val_preds, y_val)
 
-    return val_loss.item(), val_preds.numpy(), y_val.numpy()
+        intro_val_preds = []
+
+        current_window = X_train[-1].clone()
+        for _ in range(len(y_val)):
+            pred = model(current_window.unsqueeze(0))
+            pred_value = pred.item()
+            intro_val_preds.append(pred_value)
+            current_window = torch.roll(current_window,shifts=-1, dims=1)
+            current_window[0, -1] = pred_value
+
+        intro_val_preds = torch.tensor(intro_val_preds,dtype=torch.float32).unsqueeze(1)
+        intro_val_loss = loss_fn(intro_val_preds,y_val)
+
+        # I want also to study where the model is wrong the most (expecting at reset moments)
+        sample_loss_fn = nn.MSELoss(reduction='none')
+        per_timestep_loss = sample_loss_fn(train_preds, y_train)
+        per_timestep_loss = per_timestep_loss.squeeze().numpy()
+
+    return exo_val_loss.item(), exo_val_preds.numpy(), intro_val_loss.item(), intro_val_preds.numpy(), loss_on_train, loss_on_val, per_timestep_loss
 
 def visualize_targets(y_train, y_val):
     y_train_np = y_train.squeeze().numpy()
@@ -120,42 +155,63 @@ if __name__ == "__main__":
         )
 
         X_train = torch.tensor(X_train, dtype=torch.float32).unsqueeze(1)
-        X_val   = torch.tensor(X_val, dtype=torch.float32).unsqueeze(1)
-
         y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
-        y_val   = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
 
-        if lookback == 8:
-            visualize_targets(y_train, y_val)
+        X_val = torch.tensor(X_val, dtype=torch.float32).unsqueeze(1)
+        y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
 
-        val_loss, predictions, targets = train_model(
-            X_train, y_train,
-            X_val, y_val
-        )
+        exo_val_loss, exo_preds, intro_val_loss, intro_preds, loss_on_train, loss_on_val, per_timestep_loss = train_model(lookback, X_train, y_train, X_val, y_val)
+
+        plt.figure(figsize=(10, 7))
+        plt.plot(loss_on_train, label="Training")
+        plt.plot(loss_on_val, label="Validation")
+        plt.title(f"Loss evolution through epochs (Lookback={lookback})")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss Value")
+        plt.legend()
+        plt.show()
+
+        fig, (ax1, ax2) = plt.subplots(2, 1,figsize=(10, 7),sharex=True)
+        ax1.plot(y_train.squeeze().numpy(), label="Training Values")
+        ax1.set_title(f"Training Values vs Per-Timestep Loss (Lookback={lookback})")
+        ax1.set_ylabel("Value")
+        ax1.legend()
+        ax2.plot(per_timestep_loss, label="Loss", color = "red")
+        ax2.set_xlabel("Timestep")
+        ax2.set_ylabel("Squared Error")
+        ax2.legend()
+        plt.show()
+
+
+        #if lookback == 128:
+        #    visualize_dataset(y_train, y_val)
+
+        intro_preds_original = converter.reverse_scaled_data(intro_preds)
+        exo_preds_original = converter.reverse_scaled_data(exo_preds)
+        targets_original = converter.reverse_scaled_data(y_val)
 
         plt.figure(figsize=(10, 5))
-        plt.plot(predictions, label="Predictions")
-        plt.plot(targets, label="Targets")
+        plt.plot(exo_preds_original, label="Predictions")
+        plt.plot(intro_preds_original, label="Self-Predictions")
+        plt.plot(targets_original, label="Targets")
         plt.title(f"Predictions vs Targets (Lookback={lookback})")
         plt.xlabel("Time step")
         plt.ylabel("Value")
         plt.legend()
         plt.show()
 
-        preds_original = converter.reverse_scaled_data(predictions)
-        targets_original = converter.reverse_scaled_data(targets)
-
         results.append({
             "lookback": lookback,
-            "values_loss": val_loss,
-            "predictions_original": preds_original,
+            "normal values_loss": intro_val_loss,
+            "self propagating loss": exo_val_loss,
+            "predictions_original": intro_preds_original,
             "targets_original": targets_original
         })
 
     print("\nSummary:")
     for r in results:
         print(f"\nLookback: {r['lookback']}")
-        print(f"Validation loss: {r['values_loss']:.6f}")
+        print(f"Values loss: {r['intro_val_loss']:.6f}")
         print("Sample predictions:")
         print(r["predictions_original"][:10])
         print("Sample targets:")
