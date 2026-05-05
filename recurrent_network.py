@@ -1,0 +1,209 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as functional
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+import numpy as np
+from utils.data_utils import data_converter, create_sequences
+
+
+class RecurrentNetwork(nn.Module):
+    """
+    Recurrent model for univariate time series forecasting.
+    """
+    def __init__(self, hidden_size=64, num_layers=2, dropout=0.2, cell='LSTM'):
+        super().__init__()
+        rnn_cls = nn.LSTM
+        self.rnn = rnn_cls(
+            input_size=1,                                         
+            # univariate => 1 feature
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,            
+            # dropout only applies between stacked layers
+            batch_first=True,                                      
+            # input shape: [batch, seq_len, 1]
+        )
+        self.fc = nn.Linear(hidden_size, 1)
+
+    # Recurrent layers expect input shape [batch_size, seq_len, n_features].
+    # For us: [batch_size, lookback, 1]
+    def forward(self, x):
+        out, _ = self.rnn(x)          # out: [batch, seq_len, hidden]
+        last = out[:, -1, :]          # take the output at the final time step
+        return self.fc(last)          # [batch, 1]
+
+
+def train_model(X_train, y_train, X_val, y_val,
+                hidden_size=64, num_layers=2, dropout=0.2, cell='LSTM',
+                lr=1e-3, epochs=200, batch_size=32, patience=15):
+    
+    model = RecurrentNetwork(hidden_size, num_layers, dropout, cell)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    train_loader = DataLoader(
+        TensorDataset(X_train, y_train),
+        batch_size=batch_size,
+        shuffle=True,
+    )
+
+    best_val_mse = float('inf')
+    best_val_mae = float('inf')
+    best_state = None
+    epochs_since_improvement = 0
+    history = {"train": [], "val": [], "val_mae": []}
+
+    for epoch in range(epochs):
+        model.train()
+        train_losses = []
+        for x_batch, y_batch in train_loader:
+            optimizer.zero_grad()
+            preds = model(x_batch)
+            loss = functional.mse_loss(preds, y_batch)
+            loss.backward()
+            optimizer.step()
+            train_losses.append(loss.item())
+
+        model.eval()
+        with torch.no_grad():
+            val_preds = model(X_val)
+            val_mse = functional.mse_loss(val_preds, y_val).item()
+            val_mae = functional.l1_loss(val_preds, y_val).item()
+
+        history["train"].append(float(np.mean(train_losses)))
+        history["val"].append(val_mse)
+        history["val_mae"].append(val_mae)
+
+        if val_mse < best_val_mse:
+            best_val_mse = val_mse
+            best_val_mae = val_mae
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            epochs_since_improvement = 0
+        else:
+            epochs_since_improvement += 1
+            if epochs_since_improvement >= patience:
+                break
+
+    model.load_state_dict(best_state)
+    return model, best_val_mse, best_val_mae, history
+
+
+def recursive_forecast(model, seed_window, n_steps):
+    """
+    Roll the model forward "n_steps" times, feeding each prediction back as the
+    next input. This is what the assignment asks for in part (c).
+
+    seed_window: 1-D tensor of length "lookback", in SCALED space
+    n_steps: how many steps to forecast (200 for this assignment)
+    returns: 1-D numpy array of length n_steps, in SCALED space
+    """
+    model.eval()
+    current = seed_window.clone().reshape(1, -1, 1).float()   
+    # [1, lookback, 1]
+    predictions = []
+
+    with torch.no_grad():
+        for _ in range(n_steps):
+            pred = model(current)                             
+            # [1, 1]
+            predictions.append(pred.item())
+            next_step = pred.unsqueeze(-1) 
+            # [1, 1, 1]
+            # slide the window: drop oldest, append the new prediction
+            current = torch.cat([current[:, 1:, :], next_step], dim=1)
+
+    return np.array(predictions)
+
+def evaluate_forecast(predictions, targets):
+    """Both arrays in the ORIGINAL (unscaled) space."""
+    predictions = np.asarray(predictions).flatten()
+    targets = np.asarray(targets).flatten()
+    mse = float(np.mean((predictions - targets) ** 2))
+    mae = float(np.mean(np.abs(predictions - targets)))
+    return mse, mae
+
+if __name__ == "__main__":
+
+    converter = data_converter()
+    scaled_values, scaler = converter.load_scaled_data("Xtrain.csv")
+
+    results = []
+
+    for lookback in [16, 32, 64, 128]:
+
+        X, y = create_sequences(scaled_values, lookback)
+
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y,
+            test_size=0.2,
+            shuffle=False,
+        )
+
+        # recurrent layers want [batch, seq_len, n_features], so unravel the feature dim
+        X_train = torch.tensor(X_train, dtype=torch.float32).unsqueeze(-1)
+        X_val   = torch.tensor(X_val,   dtype=torch.float32).unsqueeze(-1)
+        y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+        y_val   = torch.tensor(y_val,   dtype=torch.float32).unsqueeze(1)
+
+        model, val_mse, val_mae, history = train_model(
+            X_train, y_train, X_val, y_val,
+            hidden_size=64, num_layers=2, dropout=0.2, cell='LSTM',
+            lr=1e-3, epochs=200, batch_size=32, patience=15,
+        )
+
+
+        # one-step-ahead predictions on validation
+        model.eval()
+        with torch.no_grad():
+            val_preds_scaled = model(X_val).numpy()
+        val_targets_scaled = y_val.numpy()
+
+        preds_original   = converter.reverse_scaled_data(val_preds_scaled)
+        targets_original = converter.reverse_scaled_data(val_targets_scaled)
+
+        # part (c): recursive 200-step forecast.
+        # seed with the last "lookback" points of the full training series
+        # this is what predicts the next 200 when we get test set
+        seed = torch.tensor(scaled_values[-lookback:], dtype=torch.float32)
+        recursive_scaled = recursive_forecast(model, seed, n_steps=200)
+        recursive_original = converter.reverse_scaled_data(
+            recursive_scaled.reshape(-1, 1)
+        )
+
+        results.append({
+            "lookback": lookback,
+            "val_mse": val_mse,
+            "val_mae": val_mae,
+            "history": history,
+            "predictions_original": preds_original,
+            "targets_original": targets_original,
+            "recursive_forecast": recursive_original.flatten(),
+        })
+
+        # quick sanity plots
+        fig, axes = plt.subplots(1, 3, figsize=(18, 4))
+
+        axes[0].plot(history["train"], label="train")
+        axes[0].plot(history["val"],   label="val")
+        axes[0].set_title(f"Loss curves (lookback={lookback})")
+        axes[0].set_xlabel("epoch")
+        axes[0].legend()
+
+        axes[1].plot(targets_original, label="true")
+        axes[1].plot(preds_original,   label="1-step pred", alpha=0.8)
+        axes[1].set_title("Validation: 1-step-ahead")
+        axes[1].legend()
+
+        axes[2].plot(recursive_original, label="recursive forecast")
+        axes[2].set_title("200-step recursive forecast (from end of train)")
+        axes[2].set_xlabel("step ahead")
+        axes[2].legend()
+
+        plt.tight_layout()
+        plt.show()
+
+    print("\nSummary:")
+    for r in results:
+        print(f"\nLookback: {r['lookback']}  |  val MSE: {r['val_mse']:.6f}  |  val MAE: {r['val_mae']:.6f}")
