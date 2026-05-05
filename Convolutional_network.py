@@ -6,27 +6,37 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from utils.data_utils import data_converter, create_sequences
 
+
+# kernel_size = size of the convolutional kernel, looks for one feature with given size
+# padding = 1 to keep the output size the same as the input size after convolution, common prctice is (F-1)/2 where F is the kernel size
+# stride = 1 to move the kernel one step at a time
+# dropout_prob = 0.2 for regularization because of low amount of neurons is 0.2 maybe a good value
 class ConvolutionalNetwork(nn.Module):
-    def __init__(self, kernel_size=3, padding=1):
+    def __init__(self, kernel_size=3, padding=1, stride=1, dropout_prob=0.2):
         super().__init__()
 
-        self.conv1 = nn.Conv1d(1, 64, kernel_size=kernel_size, padding=padding)
+        self.conv1 = nn.Conv1d(1, 64, kernel_size=kernel_size, padding=padding, stride=stride)
         self.relu1 = nn.ReLU()
         self.pool1 = nn.MaxPool1d(kernel_size=2)
 
-        self.conv2 = nn.Conv1d(64, 128, kernel_size=kernel_size, padding=padding)
+        self.conv2 = nn.Conv1d(64, 128, kernel_size=kernel_size, padding=padding, stride=stride)
         self.relu2 = nn.ReLU()
         self.pool2 = nn.MaxPool1d(kernel_size=2)
 
         # Not fully sure how exactly scaling the convolutional output to the original range works, 
         # but adaptive pooling should do the trick in priventing wrong input sizes to the fully connected layer.
         self.adaptive_pool = nn.AdaptiveMaxPool1d(1)
+
+        # go from tensor shape to vector shape
         self.flatten = nn.Flatten()
+
+        # go from 128 input features to 50 hidden neurons, then to 1 output feature for the prediction
         self.fc1 = nn.Linear(128, 50)
         self.relu3 = nn.ReLU()
+        self.dropout = nn.Dropout(p=dropout_prob)
         self.fc2 = nn.Linear(50, 1) 
 
-    # Conv1d expects input in the shape: [batch_size, channels, sequence_length] 
+    # Conv1d expects input in the shape: [batch_size, channels (features), sequence_length] 
     # thus in our case it should be x = [batch_size, 1 (laser measurement), lookback]
     def forward(self, x):
         x = self.pool1(self.relu1(self.conv1(x)))
@@ -36,10 +46,14 @@ class ConvolutionalNetwork(nn.Module):
         x = self.flatten(x)
 
         x = self.relu3(self.fc1(x))
+        x = self.dropout(x)
         x = self.fc2(x)
         return x
 
-
+# x_train, y_train, x_val, y_val = training and validation datasets
+# lr =  learning rate for the gradient descent optimization
+# epochs = number of times the entire training dataset is passed through the model during training
+# batch_size = number of samples processed in one batch
 def train_model(X_train, y_train, X_val, y_val, lr=0.001, epochs=50, batch_size=32):
 
     model = ConvolutionalNetwork()
@@ -72,6 +86,22 @@ def train_model(X_train, y_train, X_val, y_val, lr=0.001, epochs=50, batch_size=
 
     return val_loss.item(), val_preds.numpy(), y_val.numpy()
 
+def visualize_targets(y_train, y_val):
+    y_train_np = y_train.squeeze().numpy()
+    y_val_np = y_val.squeeze().numpy()
+
+    train_idx = range(len(y_train_np))
+    val_idx = range(len(y_train_np), len(y_train_np) + len(y_val_np))
+
+    plt.plot(train_idx, y_train_np, label="Train")
+    plt.plot(val_idx, y_val_np, label="Validation")
+
+    plt.title("Train vs Validation Targets")
+    plt.xlabel("Time step")
+    plt.ylabel("Value")
+    plt.legend()
+    plt.show()
+
 if __name__ == "__main__":
 
     converter = data_converter()
@@ -79,6 +109,7 @@ if __name__ == "__main__":
 
     results = []
 
+    # not to small lookback with kernel size of 3.
     for lookback in [8, 16, 32, 64, 128]:
 
         X, y = create_sequences(scaled_values, lookback)
@@ -95,26 +126,22 @@ if __name__ == "__main__":
         y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
         y_val   = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
 
-        if lookback == 128:
-            y_train_np = y_train.squeeze().numpy()
-            y_val_np = y_val.squeeze().numpy()
-
-            train_idx = range(len(y_train_np))
-            val_idx = range(len(y_train_np), len(y_train_np) + len(y_val_np))
-
-            plt.plot(train_idx, y_train_np, label="Train")
-            plt.plot(val_idx, y_val_np, label="Validation")
-
-            plt.title("Train vs Validation Targets")
-            plt.xlabel("Time step")
-            plt.ylabel("Value")
-            plt.legend()
-            plt.show()
+        if lookback == 8:
+            visualize_targets(y_train, y_val)
 
         val_loss, predictions, targets = train_model(
             X_train, y_train,
             X_val, y_val
         )
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(predictions, label="Predictions")
+        plt.plot(targets, label="Targets")
+        plt.title(f"Predictions vs Targets (Lookback={lookback})")
+        plt.xlabel("Time step")
+        plt.ylabel("Value")
+        plt.legend()
+        plt.show()
 
         preds_original = converter.reverse_scaled_data(predictions)
         targets_original = converter.reverse_scaled_data(targets)
