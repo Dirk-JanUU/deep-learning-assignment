@@ -23,8 +23,7 @@ class ConvolutionalNetwork(nn.Module):
         self.relu2 = nn.ReLU()
         self.pool2 = nn.MaxPool1d(kernel_size=2)
 
-        # Not fully sure how exactly scaling the convolutional output to the original range works, 
-        # but adaptive pooling should do the trick in priventing wrong input sizes to the fully connected layer.
+        # adaptive pooling should do the trick in priventing wrong input sizes to the fully connected layer.
         self.adaptive_pool = nn.AdaptiveMaxPool1d(1)
 
         # go from tensor shape to vector shape
