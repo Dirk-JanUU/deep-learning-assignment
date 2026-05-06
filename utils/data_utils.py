@@ -25,4 +25,10 @@ def create_sequences( data, lookback):
             X.append(data[i:i + lookback])
             y.append(data[i + lookback])
 
+        # To test wether the model actually learns order, I try to shuffle: COMMENT DO DISABLE IT
+        #for i in range(len(data) - lookback):
+        #     np.random.seed(2)
+        #     np.random.shuffle(X[i])
+        #
+
         return np.array(X), np.array(y)
