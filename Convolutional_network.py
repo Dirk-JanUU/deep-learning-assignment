@@ -211,7 +211,7 @@ if __name__ == "__main__":
     print("\nSummary:")
     for r in results:
         print(f"\nLookback: {r['lookback']}")
-        print(f"Values loss: {r['intro_val_loss']:.6f}")
+        print(f"Values loss: {r['normal values_loss']:.6f}")
         print("Sample predictions:")
         print(r["predictions_original"][:10])
         print("Sample targets:")
