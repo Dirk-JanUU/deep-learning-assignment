@@ -95,7 +95,7 @@ def test_model(X_test, y_test, model):
         test_preds = model(X_test)
         test_mse = functional.mse_loss(test_preds, y_test).item()
         test_mae = functional.l1_loss(test_preds, y_test).item()
-    return model, test_mse, test_mae
+    return model, test_mse, test_mae, test_preds
 
 def recursive_forecast(model, seed_window, n_steps):
     """
@@ -238,10 +238,34 @@ if __name__ == "__main__":
     X_test = torch.tensor(X_test_data, dtype=torch.float32).unsqueeze(-1)
     y_test = torch.tensor(y_test_data,   dtype=torch.float32).unsqueeze(1)
     
-    model, val_mse, val_mae = test_model(X_test, y_test, model)
+    model, val_mse, val_mae, test_preds = test_model(X_test, y_test, model)
 
     print("\nSummary test:")
     print(f"\nLookback: {16}  |  Test MSE: {val_mse:.6f}  |  Test MAE: {val_mae:.6f}")
 
+    test_preds_original = converter.reverse_scaled_data(
+        test_preds.numpy()
+    )
+
+    y_test_original = converter.reverse_scaled_data(
+        y_test.numpy()
+    )
+
+
+    plt.plot(results[0]['targets_original'], label="validation 1-step targets")
+    plt.plot(results[0]['predictions_original'],   label="validation 1-step predictions", alpha=0.8)
+    plt.title(f"Validation: 1-step-ahead(lookback = 16)")
+    plt.xlabel("Time")
+    plt.ylabel("Laser measurement")
+    plt.legend()
+    plt.show()
+
+    plt.plot(y_test_original, label="test 1-step targets")
+    plt.plot(test_preds_original,   label="test 1-step predictions", alpha=0.8)
+    plt.title(f"Test: 1-step-ahead(lookback = 16)")
+    plt.xlabel("Time")
+    plt.ylabel("Laser measurement")
+    plt.legend()
+    plt.show()
 
     
