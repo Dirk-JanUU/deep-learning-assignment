@@ -232,7 +232,12 @@ if __name__ == "__main__":
         print(f"\nLookback: {r['lookback']}  |  val MSE: {r['val_mse']:.6f}  |  val MAE: {r['val_mae']:.6f}")
 
     scaled_values_test, scaler_test = converter.load_scaled_data("Xtest.csv")
-    X_test, y_test = create_sequences(scaled_values_test, lookback=16)
+    
+    X_test_data, y_test_data = create_sequences(scaled_values_test, lookback=16)
+
+    X_test = torch.tensor(X_test_data, dtype=torch.float32).unsqueeze(-1)
+    y_test = torch.tensor(y_test_data,   dtype=torch.float32).unsqueeze(1)
+    
     model, val_mse, val_mae = test_model(X_test, y_test, model)
 
     print("\nSummary test:")
