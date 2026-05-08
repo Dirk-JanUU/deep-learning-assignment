@@ -241,7 +241,7 @@ if __name__ == "__main__":
     model, val_mse, val_mae = test_model(X_test, y_test, model)
 
     print("\nSummary test:")
-    print(f"\nLookback: {lookback}  |  Test MSE: {val_mse:.6f}  |  Test MAE: {val_mae:.6f}")
+    print(f"\nLookback: {16}  |  Test MSE: {val_mse:.6f}  |  Test MAE: {val_mae:.6f}")
 
 
     
