@@ -89,6 +89,13 @@ def train_model(X_train, y_train, X_val, y_val,
     model.load_state_dict(best_state)
     return model, best_val_mse, best_val_mae, history
 
+def test_model(X_test, y_test, model):
+    model.eval()
+    with torch.no_grad():
+        test_preds = model(X_test)
+        test_mse = functional.mse_loss(test_preds, y_test).item()
+        test_mae = functional.l1_loss(test_preds, y_test).item()
+    return model, test_mse, test_mae
 
 def recursive_forecast(model, seed_window, n_steps):
     """
@@ -220,6 +227,16 @@ if __name__ == "__main__":
         plt.tight_layout()
         plt.show()
 
-    print("\nSummary:")
+    print("\nSummary validation:")
     for r in results:
         print(f"\nLookback: {r['lookback']}  |  val MSE: {r['val_mse']:.6f}  |  val MAE: {r['val_mae']:.6f}")
+
+    scaled_values_test, scaler_test = converter.load_scaled_data("Xtest.csv")
+    X_test, y_test = create_sequences(scaled_values_test, lookback=16)
+    model, val_mse, val_mae = test_model(X_test, y_test, model)
+
+    print("\nSummary test:")
+    print(f"\nLookback: {lookback}  |  Test MSE: {val_mse:.6f}  |  Test MAE: {val_mae:.6f}")
+
+
+    
