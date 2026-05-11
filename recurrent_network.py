@@ -1,3 +1,4 @@
+from sklearn.metrics import mean_squared_error
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -228,8 +229,6 @@ if __name__ == "__main__":
         plt.show()
 
     print("\nSummary validation:")
-    for r in results:
-        print(f"\nLookback: {r['lookback']}  |  val MSE: {r['val_mse']:.6f}  |  val MAE: {r['val_mae']:.6f}")
 
     scaled_values_test, scaler_test = converter.load_scaled_data("Xtest.csv")
     
@@ -269,3 +268,58 @@ if __name__ == "__main__":
     plt.show()
 
     
+    for r in results:
+        print(f"\nLookback: {r['lookback']}  |  val MSE: {r['val_mse']:.6f}  |  val MAE: {r['val_mae']:.6f}")
+    
+        forecast = np.array(r['recursive_forecast']).flatten()
+        true_values = y_test_original.flatten()
+
+        n = min(len(forecast), len(true_values))
+
+        forecast = forecast[:n]
+        true_values = true_values[:n]
+
+        squared_error = (forecast - true_values) ** 2
+        mse = mean_squared_error(true_values, forecast)
+
+        min_err = squared_error.min()
+        max_err = squared_error.max()
+
+        normalized_error = (squared_error - min_err) / (max_err - min_err + 1e-8)
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+        ax1.plot(forecast, label="recursive forecast")
+        ax1.plot(true_values, label="true values", alpha=0.7)
+
+        ax1.set_title(
+            f"200-step recursive forecast Test set (lookback={r['lookback']})"
+        )
+        ax1.set_ylabel("Laser measurement")
+        ax1.set_xlabel("Time")
+        ax1.legend()
+
+        ax2.plot(
+            normalized_error,
+            color='red',
+            label="normalized squared error"
+        )
+
+        normalized_mse = (mse - min_err) / (max_err - min_err + 1e-8)
+
+        ax2.axhline(
+            y=normalized_mse,
+            color='black',
+            linestyle='--',
+            label=f'normalized MSE = {normalized_mse:.4f}'
+        )
+
+        ax2.set_title("Normalized forecast error (0 to 1)")
+        ax2.set_xlabel("Step ahead")
+        ax2.set_ylabel("Normalized Error")
+        ax2.set_ylim(0, 1)
+
+        ax2.legend()
+
+        plt.tight_layout()
+        plt.show()
