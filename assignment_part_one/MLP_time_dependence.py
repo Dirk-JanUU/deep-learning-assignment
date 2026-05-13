@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
-from utils.data_utils import data_converter, create_sequences
+from assignment_part_one.data_utils import data_converter, create_sequences
 import matplotlib.pyplot as plt
 
 # input_size = lookback steps
@@ -28,6 +28,16 @@ class MLP(nn.Module):
 # epochs = number of times the entire training dataset is passed through the model during training
 # batch_size = number of samples processed in one batch
 def train_model(lookback, X_train, y_train, X_val, y_val, hidden_size=16, lr=0.001, epochs=50, batch_size=32):
+
+    # I try to make order matters using a temporal decay
+    if lookback // 10 == 0: decaying_factor = 0.9
+    else: decaying_factor = 0.9 + 0.9 * 10 ** -((lookback // 10))# The decaying factor must be adapted to the window size otherwise you get exploding self-propagating error -> frequency is not mapped 
+    #print(decaying_factor)
+    decay_weights = torch.tensor([decaying_factor ** (lookback - 1 - i) for i in range(lookback)],dtype=X_train.dtype, device=X_train.device)
+    #for i in range(lookback):
+    #    print(decaying_factor ** (lookback -1 -i) )
+    X_train = X_train * decay_weights
+    X_val = X_val * decay_weights
 
     model = MLP(input_size=lookback, hidden_size=hidden_size, output_size=1)
     loss_fn = nn.MSELoss()
@@ -178,7 +188,7 @@ if __name__ == "__main__":
 
         results.append({
             "lookback": lookback,
-            "Loss": exo_val_loss,
+            "loss": exo_val_loss,
             "self propagating loss": intro_val_loss,
             #"predictions_original": intro_preds_original,
             #"targets_original": targets_original
@@ -186,4 +196,4 @@ if __name__ == "__main__":
 
     print("\nSummary:")
     for r in results:
-        print(r)
+       print(r)

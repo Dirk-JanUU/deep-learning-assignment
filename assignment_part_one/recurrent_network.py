@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import numpy as np
-from utils.data_utils import data_converter, create_sequences
+from assignment_part_one.data_utils import data_converter, create_sequences
 
 
 class RecurrentNetwork(nn.Module):

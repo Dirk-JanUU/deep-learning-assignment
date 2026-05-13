@@ -3,62 +3,36 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
+from assignment_part_one.data_utils import data_converter, create_sequences
 import matplotlib.pyplot as plt
-from utils.data_utils import data_converter, create_sequences
 
-
-# kernel_size = size of the convolutional kernel, looks for one feature with given size
-# padding = 1 to keep the output size the same as the input size after convolution, common prctice is (F-1)/2 where F is the kernel size
-# stride = 1 to move the kernel one step at a time
+# input_size = lookback steps
+# hidden_size = number of neurons in the hidden layer
+# output_size = 1 predicting laser measurements at the next time step
 # dropout_prob = 0.2 for regularization because of low amount of neurons is 0.2 maybe a good value
-class ConvolutionalNetwork(nn.Module):
-    def __init__(self, kernel_size=3, padding=1, stride=1, dropout_prob=0.2):
-        super().__init__()
+class MLP(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, dropout_prob=0.2):
+        super(MLP, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_prob),
+            nn.Linear(hidden_size, output_size)
+        )
 
-        self.conv1 = nn.Conv1d(1, 64, kernel_size=kernel_size, padding=padding, stride=stride)
-        self.relu1 = nn.ReLU()
-        self.pool1 = nn.MaxPool1d(kernel_size=2)
-
-        self.conv2 = nn.Conv1d(64, 128, kernel_size=kernel_size, padding=padding, stride=stride)
-        self.relu2 = nn.ReLU()
-        self.pool2 = nn.MaxPool1d(kernel_size=2)
-
-        # adaptive pooling should do the trick in priventing wrong input sizes to the fully connected layer.
-        self.adaptive_pool = nn.AdaptiveMaxPool1d(1)
-
-        # go from tensor shape to vector shape
-        self.flatten = nn.Flatten()
-
-        # go from 128 input features to 50 hidden neurons, then to 1 output feature for the prediction
-        self.fc1 = nn.Linear(128, 50)
-        self.relu3 = nn.ReLU()
-        self.dropout = nn.Dropout(p=dropout_prob)
-        self.fc2 = nn.Linear(50, 1) 
-
-    # Conv1d expects input in the shape: [batch_size, channels (features), sequence_length] 
-    # thus in our case it should be x = [batch_size, 1 (laser measurement), lookback]
     def forward(self, x):
-        x = self.pool1(self.relu1(self.conv1(x)))
-        x = self.pool2(self.relu2(self.conv2(x)))
-
-        x = self.adaptive_pool(x)
-        x = self.flatten(x)
-
-        x = self.relu3(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)
-        return x
+        return self.net(x)
 
 # x_train, y_train, x_val, y_val = training and validation datasets
 # lr =  learning rate for the gradient descent optimization
 # epochs = number of times the entire training dataset is passed through the model during training
 # batch_size = number of samples processed in one batch
-def train_model(lookback, X_train, y_train, X_val, y_val,
-                lr=0.001, epochs=50, batch_size=32):
+def train_model(lookback, X_train, y_train, X_val, y_val, hidden_size=16, lr=0.001, epochs=50, batch_size=32):
 
-    model = ConvolutionalNetwork()
-
+    model = MLP(input_size=lookback, hidden_size=hidden_size, output_size=1)
     loss_fn = nn.MSELoss()
+
+    # adam sounded efficient and good to use in the lecture
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     train_loader = DataLoader(
@@ -71,20 +45,20 @@ def train_model(lookback, X_train, y_train, X_val, y_val,
     loss_on_val = []
 
     for epoch in range(epochs):
-
         model.train()
 
         for x_batch, y_batch in train_loader:
             optimizer.zero_grad()
+
             preds = model(x_batch)
             loss = loss_fn(preds, y_batch)
+
             loss.backward()
             optimizer.step()
 
         model.eval()
 
         with torch.no_grad():
-
             train_preds = model(X_train)
             val_preds = model(X_val)
 
@@ -94,6 +68,7 @@ def train_model(lookback, X_train, y_train, X_val, y_val,
             loss_on_train.append(train_loss.item())
             loss_on_val.append(val_loss.item())
 
+
     model.eval()
 
     with torch.no_grad():
@@ -102,13 +77,14 @@ def train_model(lookback, X_train, y_train, X_val, y_val,
 
         intro_val_preds = []
 
+        # Here I want to fill model predictions back to itself, using a window to store them
         current_window = X_train[-1].clone()
         for _ in range(len(y_val)):
             pred = model(current_window.unsqueeze(0))
             pred_value = pred.item()
             intro_val_preds.append(pred_value)
-            current_window = torch.roll(current_window,shifts=-1, dims=1)
-            current_window[0, -1] = pred_value
+            current_window = torch.roll(current_window, shifts=-1)
+            current_window[-1] = pred_value
 
         intro_val_preds = torch.tensor(intro_val_preds,dtype=torch.float32).unsqueeze(1)
         intro_val_loss = loss_fn(intro_val_preds,y_val)
@@ -120,15 +96,16 @@ def train_model(lookback, X_train, y_train, X_val, y_val,
 
     return exo_val_loss.item(), exo_val_preds.numpy(), intro_val_loss.item(), intro_val_preds.numpy(), loss_on_train, loss_on_val, per_timestep_loss
 
-def visualize_targets(y_train, y_val):
+def visualize_dataset(y_train, y_val ):
     y_train_np = y_train.squeeze().numpy()
     y_val_np = y_val.squeeze().numpy()
 
+    # create x-axis indices
     train_idx = range(len(y_train_np))
     val_idx = range(len(y_train_np), len(y_train_np) + len(y_val_np))
 
-    plt.plot(train_idx, y_train_np, label="Train")
-    plt.plot(val_idx, y_val_np, label="Validation")
+    plt.plot(train_idx, y_train_np, label="Train_labels")
+    plt.plot(val_idx, y_val_np, label="Validation_labels")
 
     plt.title("Train vs Validation Targets")
     plt.xlabel("Time step")
@@ -143,8 +120,8 @@ if __name__ == "__main__":
 
     results = []
 
-    # not to small lookback with kernel size of 3.
-    for lookback in [8, 16, 32, 64, 128]:
+    # I guess lookback is enough to use as a hyperparameter to test, compared to many other hyperparameters
+    for lookback in [2, 4, 8, 16, 32, 64, 128]:
 
         X, y = create_sequences(scaled_values, lookback)
 
@@ -154,10 +131,10 @@ if __name__ == "__main__":
             shuffle=False
         )
 
-        X_train = torch.tensor(X_train, dtype=torch.float32).unsqueeze(1)
+        X_train = torch.tensor(X_train, dtype=torch.float32)
         y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
 
-        X_val = torch.tensor(X_val, dtype=torch.float32).unsqueeze(1)
+        X_val = torch.tensor(X_val, dtype=torch.float32)
         y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
 
         exo_val_loss, exo_preds, intro_val_loss, intro_preds, loss_on_train, loss_on_val, per_timestep_loss = train_model(lookback, X_train, y_train, X_val, y_val)
@@ -182,7 +159,6 @@ if __name__ == "__main__":
         ax2.legend()
         plt.show()
 
-
         #if lookback == 128:
         #    visualize_dataset(y_train, y_val)
 
@@ -202,17 +178,12 @@ if __name__ == "__main__":
 
         results.append({
             "lookback": lookback,
-            "normal values_loss": intro_val_loss,
-            "self propagating loss": exo_val_loss,
-            "predictions_original": intro_preds_original,
-            "targets_original": targets_original
+            "Loss": exo_val_loss,
+            "self propagating loss": intro_val_loss,
+            #"predictions_original": intro_preds_original,
+            #"targets_original": targets_original
         })
 
     print("\nSummary:")
     for r in results:
-        print(f"\nLookback: {r['lookback']}")
-        print(f"Values loss: {r['normal values_loss']:.6f}")
-        print("Sample predictions:")
-        print(r["predictions_original"][:10])
-        print("Sample targets:")
-        print(r["targets_original"][:10])
+        print(r)
