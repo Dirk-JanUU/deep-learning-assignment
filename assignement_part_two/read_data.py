@@ -1,9 +1,18 @@
 import h5py
 import os
 
+labels = {
+    "rest": 0,
+    "motor": 1,
+    "math": 2,
+    "memory": 3
+}
+
 class DataSet:
-    def __init__(self, persons, matrixes_data, matrixes_label, labels):
+    def __init__(self, persons, matrixes_data, matrixes_label):
+        # ignore for now, but we can use it later to do person-specific statistical analysis (maybe out of scope)
         self.persons = persons
+
         self.x_data = matrixes_data
         self.y_data = matrixes_label
         self.labels = labels
@@ -51,19 +60,19 @@ def retrieve_file_name_info(file_path: str):
     person_id = None
     task_id = None
     if file_path.find("rest") != -1:
-        task_name = "rest"
+        task_name = labels["rest"]
         person_id = file_path.split('_')[1]
         task_id = file_path.split('_')[2].split('.')[0]
     elif file_path.find("motor") != -1:
-        task_name = "motor"
+        task_name = labels["motor"]
         person_id = file_path.split('_')[2]
         task_id = file_path.split('_')[3].split('.')[0]
     elif file_path.find("math") != -1:
-        task_name = "math"
+        task_name = labels["math"]
         person_id = file_path.split('_')[3]
         task_id = file_path.split('_')[4].split('.')[0]
     elif file_path.find("memory") != -1:
-        task_name = "memory"
+        task_name = labels["memory"]
         person_id = file_path.split('_')[3]
         task_id = file_path.split('_')[4].split('.')[0]
 
@@ -75,7 +84,6 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
     directrory_path = directrory_path.replace ('\\', '/')
 
     persons = []
-    labels = ["rest", "motor", "math", "memory"]
     x_data = []
     y_data = []
 
@@ -97,14 +105,12 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
 
             person = next(person for person in persons if person.id == person_id)
             person.add_task(task_data)
-    return persons, labels, x_data, y_data
+    return persons, x_data, y_data
 
 if __name__ == "__main__":
     subdirectory = "Cross"
     type_of_data = "test3"
-    persons, labels, x_data, y_data = load_data_from_h5_files(subdirectory=subdirectory, type_of_data=type_of_data)
+    persons, x_data, y_data = load_data_from_h5_files(subdirectory=subdirectory, type_of_data=type_of_data)
     print (f"Number of persons loaded: {len(persons)}")
     print (f"Number of tasks for first person: {len(persons[0].get_tasks())}")
-    print (f"Number of tasks of type '{labels[0]}' for first person: {len(persons[0].get_tasks_by_name(labels[0]))}")
-    print (f"Labels: {labels}")
     print (f"Data shape: {x_data[0].shape}")
