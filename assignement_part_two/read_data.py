@@ -1,6 +1,13 @@
 import h5py
 import os
 
+class DataSet:
+    def __init__(self, persons, matrixes_data, matrixes_label, labels):
+        self.persons = persons
+        self.x_data = matrixes_data
+        self.y_data = matrixes_label
+        self.labels = labels
+
 class PersonData:
     def __init__(self, id):
         self.id = id
@@ -69,7 +76,8 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
 
     persons = []
     labels = ["rest", "motor", "math", "memory"]
-    data = []
+    x_data = []
+    y_data = []
 
     for filename in os.listdir(directrory_path):
         if filename.endswith('.h5'):
@@ -78,7 +86,8 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
             task_name, person_id, task_id = retrieve_file_name_info(filename)
             matrix = read_h5_file (file_path)
 
-            data.append(matrix)
+            x_data.append(matrix)
+            y_data.append(task_name)
 
             task_data = TaskData(name=task_name, id=task_id, matrix=matrix)
 
@@ -88,14 +97,14 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
 
             person = next(person for person in persons if person.id == person_id)
             person.add_task(task_data)
-    return persons, labels, data
+    return persons, labels, x_data, y_data
 
 if __name__ == "__main__":
     subdirectory = "Cross"
     type_of_data = "test3"
-    persons, labels, data = load_data_from_h5_files(subdirectory=subdirectory, type_of_data=type_of_data)
+    persons, labels, x_data, y_data = load_data_from_h5_files(subdirectory=subdirectory, type_of_data=type_of_data)
     print (f"Number of persons loaded: {len(persons)}")
     print (f"Number of tasks for first person: {len(persons[0].get_tasks())}")
     print (f"Number of tasks of type '{labels[0]}' for first person: {len(persons[0].get_tasks_by_name(labels[0]))}")
     print (f"Labels: {labels}")
-    print (f"Data shape: {data[0].shape}")
+    print (f"Data shape: {x_data[0].shape}")
