@@ -20,28 +20,38 @@ class DataSet:
 class PersonData:
     def __init__(self, id):
         self.id = id
-        self.tasks = []
+        self.scans = []
 
-    def add_task(self, task_data):
-        self.tasks.append(task_data)
+    def add_scan(self, scan_data):
+        self.scans.append(scan_data)
 
-    def get_tasks(self):
-        return self.tasks
+    def get_scans(self):
+        return self.scans
     
-    def get_tasks_by_name(self, task_name):
-        return [task for task in self.tasks if task.name == task_name]
+    def get_scans_by_task_name(self, task_name):
+        return [scan for scan in self.scans if scan.task == task_name]
     
-    def get_task_by_id(self, task_id):
-        for task in self.tasks:
-            if task.id == task_id:
-                return task
+    def get_scan_by_id(self, scan_id):
+        for scan in self.scans:
+            if scan.id == scan_id:
+                return scan
         return None
+    
+    def get_tasks_names(self):
+        scans = self.get_scans()
+        tasks_names = []
+        for scan in scans: 
+            tasks_names.append(scan.get_task_name())
+        return tasks_names
 
-class TaskData:
-    def __init__(self, name, id, matrix):
-        self.name = name
+class ScanData:
+    def __init__(self, id, task, matrix):
         self.id = id
+        self.task = task
         self.matrix = matrix
+    
+    def get_task_name(self): #returns alphabetic name of task
+        return next(key for key, value in labels.items() if value == self.task)
 
 def get_dataset_name(file_name_with_dir):
     filename_without_dir = file_name_with_dir.split('/')[-1]
@@ -80,6 +90,10 @@ def retrieve_file_name_info(file_path: str):
     return task_name, person_id, task_id
 
 def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory="Intra" , type_of_data = "test"):
+    # Returns:
+    # - persons : an array containing person ids
+    # - x_data : an array containing the brain recordings correlated to a task, the independent variable
+    # - y_data : contains the task name, the dependent variable, what we aim to predict 
     directrory_path = os.path.join(parent_directory, subdirectory, type_of_data)
     directrory_path = directrory_path.replace ('\\', '/')
 
@@ -97,20 +111,22 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
             x_data.append(matrix)
             y_data.append(task_name)
 
-            task_data = TaskData(name=task_name, id=task_id, matrix=matrix)
+            scan_data = ScanData(id=task_id, task=task_name , matrix=matrix)
 
             if not any(person.id == person_id for person in persons):
                 new_person = PersonData(id=person_id)
                 persons.append(new_person)
 
             person = next(person for person in persons if person.id == person_id)
-            person.add_task(task_data)
-    return persons, x_data, y_data
+            person.add_scan(scan_data)
+    return persons
 
 if __name__ == "__main__":
-    subdirectory = "Cross"
-    type_of_data = "test3"
+    subdirectory = "Intra"
+    type_of_data = "train"
     persons, x_data, y_data = load_data_from_h5_files(subdirectory=subdirectory, type_of_data=type_of_data)
     print (f"Number of persons loaded: {len(persons)}")
-    print (f"Number of tasks for first person: {len(persons[0].get_tasks())}")
+    print (f"Number of scans for first person: {len(persons[0].get_scans())}")
+    print(f"Name of tasks for first person:{persons[0].get_tasks_names()}")
     print (f"Data shape: {x_data[0].shape}")
+    print(y_data)
