@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torch.optim as optim
+from scipy.signal import decimate
 
 class LongShortTermMemoryNetwork(nn.Module):
     def __init__(self, input_size, hidden_size, output_size = 4, layers = 2, dropout=0.2):
@@ -76,11 +77,68 @@ def train_model(model: LongShortTermMemoryNetwork, train_x, train_y, loss_functi
             f"Loss: {avg_loss:.4f}"
         )
 
-if __name__ == "__main__":
+def test_model(model: LongShortTermMemoryNetwork, test_x, test_y, loss_function,batch_size: int = 32):
 
-    persons, x_data, y_data = read_data.load_data_from_h5_files()
-    context = read_data.DataSet(persons, x_data, y_data)
+    dataset = torch.utils.data.TensorDataset(test_x, test_y)
 
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True
+    )
+
+    model.eval()
+
+    total_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+
+        for batch_x, batch_y in dataloader:
+
+            outputs = model(batch_x)
+
+            loss = loss_function(outputs, batch_y)
+
+            total_loss += loss.item()
+
+            predictions = torch.argmax(outputs, dim=1)
+
+            correct += (predictions == batch_y).sum().item()
+
+            total += batch_y.size(0)
+
+    avg_loss = total_loss / len(dataloader)
+
+    accuracy = correct / total
+
+    print(f"Test Loss: {avg_loss:.4f}")
+    print(f"Test Accuracy: {accuracy:.4f}")
+
+    with torch.no_grad():
+
+        outputs = model(test_x)
+
+        loss = loss_function(outputs, test_y)
+
+        _, predicted = torch.max(outputs, 1)
+
+        accuracy = (predicted == test_y).float().mean().item()
+
+        print(f"Test Loss: {loss.item():.4f}, Accuracy: {accuracy:.4f}")
+
+# currently 2034 samples per second which times 17.5 for one scane is 35645 samples per scane,
+# which divided by 20 is approximatly 102 samples per second which times 17.5 is 1787 samples per scane
+def down_sample(context: read_data.DataSet, factor: int = 20):
+    for i in range(len(context.x_data)):
+        context.x_data[i] = decimate(
+            context.x_data[i],
+            factor,
+            axis=1
+        )
+
+def min_max_scaling(context: read_data.DataSet):
     scaler = data_utils.DataScaler()
 
     all_sequences = np.concatenate(context.x_data, axis=0)
@@ -90,30 +148,71 @@ if __name__ == "__main__":
     for i in range(len(context.x_data)):
         context.x_data[i][:] = scaler.transform(context.x_data[i])
 
-    sequence_length = 256
-    step_size = 128
-
+# with downsampling factor of 20, we have 1787 samples per scane,
+# with sequence length of 256 and step size of 128, we get approximately 13 sequences per scane
+def create_sequences(context: read_data.DataSet, sequence_length: int = 256, step_size: int = 128):
     X, y = data_utils.DataSequenceGenerator.create_sequences(
         context.x_data,
         context.y_data,
         sequence_length=sequence_length,
         step_size=step_size
     )
+    
+    return X,y
+
+def convert_data(down_sample, min_max_scaling, create_sequences, context):
+    down_sample(context)
+
+    min_max_scaling(context)
+
+    X, y = create_sequences(context)
 
     X_tensor = torch.tensor(X, dtype=torch.float32)
 
     y_tensor = torch.tensor(y, dtype=torch.long)
 
-    input_size = X_tensor.shape[2]
+    return X_tensor,y_tensor
 
-    model = LongShortTermMemoryNetwork(input_size=input_size, hidden_size=128, output_size=len(set(context.labels.values())))
-    loss_function = nn.CrossEntropyLoss()
+if __name__ == "__main__":
 
-    optimizer = optim.Adam(model.parameters(),lr=0.001)
+    # ONE SUBJECT TRAINING AND TESTING
 
-    # TODO: still have to Find out how to downsample
-    train_model(model, X_tensor, y_tensor, loss_function, optimizer, num_epochs=10)
+    parent_folder = "Final_project_data"
+    persons, x_data_train, y_data_train = read_data.load_data_from_h5_files(parent_folder, "Intra", "train")
+    context_train = read_data.DataSet(persons, x_data_train, y_data_train)
 
+    X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
 
+    model = LongShortTermMemoryNetwork(input_size=X_tensor_train.shape[2], hidden_size=128, output_size=len(set(context_train.labels.values())))
 
+    train_model(model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(model.parameters(),lr=0.001), num_epochs=20)
+
+    persons_test, x_data_test, y_data_test = read_data.load_data_from_h5_files(parent_folder, "Intra", "test")
+    context_test = read_data.DataSet(persons_test, x_data_test, y_data_test)
+
+    X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
+
+    test_model(model, X_tensor_test, y_tensor_test, nn.CrossEntropyLoss())
+
+    # ONE SUBJECT TRAINING AND TESTING
+
+    # TWO SUBJECT TRAINING AND TESTING
+
+    persons_train, x_data_train, y_data_train = read_data.load_data_from_h5_files(parent_folder, "Cross", "train")
+    context_train = read_data.DataSet(persons_train, x_data_train, y_data_train)
+
+    X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
+
+    model = LongShortTermMemoryNetwork(input_size=X_tensor_train.shape[2], hidden_size=128, output_size=len(set(context_train.labels.values())))
+
+    train_model(model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(model.parameters(),lr=0.001), num_epochs=20)
+
+    persons_test, x_data_test, y_data_test = read_data.load_data_from_h5_files(parent_folder, "Cross", "test1")
+    context_test = read_data.DataSet(persons_test, x_data_test, y_data_test)
+
+    X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
+
+    test_model(model, X_tensor_test, y_tensor_test, nn.CrossEntropyLoss())
+
+    # TWO SUBJECT TRAINING AND TESTING
 
