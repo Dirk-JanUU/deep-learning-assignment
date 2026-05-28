@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from read_data import load_data_from_h5_files
+from scipy.signal import find_peaks, peak_widths
+from scipy.ndimage import gaussian_filter1d
 
 
 TASK_MARKERS = {
@@ -30,12 +32,25 @@ def mean_informative_electrode(brain_scan):
 
     return mean_electrodes
 
+def max_informative_electrode(brain_scan):
 
-def plot_mean_informative_electrode(persons, downsample=10):
+    max_electrodes = []
+
+    for i, col in enumerate(brain_scan.T):
+        max_electrodes.append(np.abs(col).argmax())
+
+    return max_electrodes
+
+def plot_electrode(persons, operation, downsample=10):
 
     fig, ax = plt.subplots(figsize=(14, 8))
     cmap = plt.get_cmap("tab10")
 
+    # person_ids = [p.id for p in persons]
+    id_change_index_index = 25
+    for p in persons:
+        p.id += f"_{id_change_index_index}"
+        id_change_index_index += 50
     person_colors = {
         person.id: cmap(i % cmap.N)
         for i, person in enumerate(persons)
@@ -49,7 +64,7 @@ def plot_mean_informative_electrode(persons, downsample=10):
         for scan in person.get_scans():
             task = scan.get_task_name()
 
-            curve = np.asarray(mean_informative_electrode(scan.matrix))
+            curve = np.asarray(operation(scan.matrix))
             curve = curve[::downsample]
 
             grouped[person.id].setdefault(task, [])
@@ -160,6 +175,17 @@ def plot_mean_informative_electrode(persons, downsample=10):
     plt.tight_layout()
     plt.show()
 
+def plot_electrodes_activation():
+    plt.figure(figsize=(14, 8))
+    plt.title("One Electrode through time for a single scan")
+    plt.xlabel("Time")
+    plt.ylabel("Electrode")
+    plt.plot(pers1[0].get_scans()[0].matrix[0], alpha=0.5)
+    plt.plot(pers1[0].get_scans()[0].matrix[100], alpha=0.8)
+    plt.plot(pers1[0].get_scans()[0].matrix[200], alpha=0.2)
+    plt.show()
+
+
 if __name__ == "__main__":
     parent_folder = "Final_project_data"
     pers1 = load_data_from_h5_files(parent_folder, "Cross", "train")
@@ -169,5 +195,6 @@ if __name__ == "__main__":
     pers5 = load_data_from_h5_files(parent_folder, "Intra", "train")
     pers6 = load_data_from_h5_files(parent_folder, "Intra", "test")
 
-    plot_mean_informative_electrode(pers5, downsample=1000)
+
+    plot_electrode(pers1, mean_informative_electrode, downsample=1000)
 
