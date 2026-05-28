@@ -119,7 +119,7 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
 
             person = next(person for person in persons if person.id == person_id)
             person.add_scan(scan_data)
-    return  persons, x_data, y_data
+    return  persons
 
 if __name__ == "__main__":
     subdirectory = "Intra"

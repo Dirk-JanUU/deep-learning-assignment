@@ -13,6 +13,9 @@ TASK_MARKERS = {
     "memory": "D"
 }
 
+def num_to_range(num, inMin, inMax, outMin, outMax):
+  return outMin + (float(num - inMin) / float(inMax - inMin) * (outMax
+                  - outMin))
 
 def mean_informative_electrode(brain_scan):
     elec_activ_sum = np.abs(brain_scan).sum(axis=0)
@@ -175,14 +178,25 @@ def plot_electrode(persons, operation, downsample=10):
     plt.tight_layout()
     plt.show()
 
-def plot_electrodes_activation():
+def plot_electrode_activation_through_time(scan, electrode_idxs):
     plt.figure(figsize=(14, 8))
-    plt.title("One Electrode through time for a single scan")
+    plt.title("Electrodes Activation through time")
     plt.xlabel("Time")
     plt.ylabel("Electrode")
-    plt.plot(pers1[0].get_scans()[0].matrix[0], alpha=0.5)
-    plt.plot(pers1[0].get_scans()[0].matrix[100], alpha=0.8)
-    plt.plot(pers1[0].get_scans()[0].matrix[200], alpha=0.2)
+
+    for idx in electrode_idxs:
+        plt.plot(scan.matrix[idx], label=f"Electrode {idx}", alpha= num_to_range(idx, min(electrode_idxs), max(electrode_idxs), 0.2, 1.0))
+    plt.legend()
+    plt.show()
+
+def plot_electrodes_activations__over_single_timestep(scan, timestep=0):
+    activations = scan.matrix.T[timestep]
+    plt.figure(figsize=(12, 6))
+    plt.bar(range(len(activations)), activations)
+    plt.xlabel("Electrode Index")
+    plt.ylabel("Activation")
+    plt.title(f"Map of Electrodes Activations at Timestep {timestep}")
+    plt.grid(True)
     plt.show()
 
 
@@ -195,6 +209,5 @@ if __name__ == "__main__":
     pers5 = load_data_from_h5_files(parent_folder, "Intra", "train")
     pers6 = load_data_from_h5_files(parent_folder, "Intra", "test")
 
-
-    plot_electrode(pers1, mean_informative_electrode, downsample=1000)
-
+    #plot_electrode(pers1, mean_informative_electrode, downsample=1000)
+    plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200])
