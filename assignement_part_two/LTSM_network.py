@@ -138,14 +138,12 @@ def down_sample(context: read_data.DataSet, factor: int = 20):
             axis=1
         )
 
-def min_max_scaling(context: read_data.DataSet):
-    scaler = data_utils.DataScaler()
-
-    all_sequences = np.concatenate(context.x_data, axis=0)
-
-    scaler.fit(all_sequences)
-
+def min_max_scaling(context):
     for i in range(len(context.x_data)):
+        scaler = data_utils.DataScaler()
+
+        scaler.fit(context.x_data[i])
+
         context.x_data[i][:] = scaler.transform(context.x_data[i])
 
 # with downsampling factor of 20, we have 1787 samples per scane,

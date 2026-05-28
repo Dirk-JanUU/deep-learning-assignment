@@ -1,8 +1,9 @@
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 
 class DataScaler:
-    def __init__(self, scaler=MinMaxScaler()):
+    def __init__(self, scaler=StandardScaler()):
         self.scaler = scaler
 
     def fit(self, data):
