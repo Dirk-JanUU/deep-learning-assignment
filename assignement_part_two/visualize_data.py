@@ -1,9 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from read_data import load_data_from_h5_files
+from read_data import ScanData, load_data_from_h5_files
 from scipy.signal import find_peaks, peak_widths
 from scipy.ndimage import gaussian_filter1d
+
+from pre_process import pre_process
 
 
 TASK_MARKERS = {
@@ -44,7 +46,7 @@ def max_informative_electrode(brain_scan):
 
     return max_electrodes
 
-def plot_electrode(persons, operation, downsample=10):
+def plot_informative_electrodes(persons, operation, downsample=10):
 
     fig, ax = plt.subplots(figsize=(14, 8))
     cmap = plt.get_cmap("tab10")
@@ -178,7 +180,10 @@ def plot_electrode(persons, operation, downsample=10):
     plt.tight_layout()
     plt.show()
 
-def plot_electrode_activation_through_time(scan, electrode_idxs):
+def plot_electrode_activation_through_time(scan, electrode_idxs, pre_processn=False):
+    if pre_processn:
+        scan = ScanData(scan.id, scan.task, pre_process(scan.matrix))
+
     plt.figure(figsize=(14, 8))
     plt.title("Electrodes Activation through time")
     plt.xlabel("Time")
@@ -189,7 +194,10 @@ def plot_electrode_activation_through_time(scan, electrode_idxs):
     plt.legend()
     plt.show()
 
-def plot_electrodes_activations__over_single_timestep(scan, timestep=0):
+def plot_electrodes_activations__over_single_timestep(scan, timestep=0, pre_processn=False):
+    if pre_processn:
+        scan = ScanData(scan.id, scan.task, pre_process(scan.matrix))
+
     activations = scan.matrix.T[timestep]
     plt.figure(figsize=(12, 6))
     plt.bar(range(len(activations)), activations)
@@ -197,6 +205,36 @@ def plot_electrodes_activations__over_single_timestep(scan, timestep=0):
     plt.ylabel("Activation")
     plt.title(f"Map of Electrodes Activations at Timestep {timestep}")
     plt.grid(True)
+    plt.show()
+
+def plot_band_powers_over_electrodes(scan):
+    pre_processed_scan = pre_process(scan.matrix, feature_extraction="fourier")
+    band_names = ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
+    plt.figure(figsize=(14, 8))
+    plt.title("Band Powers across Electrodes")
+    plt.xlabel("Electrode Index")
+    plt.ylabel("Average Power")
+    for i in range(pre_processed_scan.shape[1]):
+        plt.plot(pre_processed_scan[:, i], label=f"{band_names[i]} Band")
+    plt.legend()
+    plt.show()
+
+def plot_band_powers_over_time(scan, electrode_idx=0):
+    pre_processed_scan = pre_process(scan.matrix, sfreq=2034, feature_extraction="wavelets")
+    band_names = ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
+    
+    electrode_data = pre_processed_scan[electrode_idx, :, :]
+    
+    plt.figure(figsize=(14, 8))
+    plt.title(f"Time-Frequency Power for Electrode {electrode_idx}")
+    plt.xlabel("Time Samples")
+    plt.ylabel("Power (fT²)")
+    
+    for i in range(electrode_data.shape[0]):
+        plt.plot(electrode_data[i, :], label=f"{band_names[i]} Band", alpha=0.7)
+        
+    plt.legend()
+    plt.grid(True, alpha=0.3)
     plt.show()
 
 
@@ -210,4 +248,10 @@ if __name__ == "__main__":
     pers6 = load_data_from_h5_files(parent_folder, "Intra", "test")
 
     #plot_electrode(pers1, mean_informative_electrode, downsample=1000)
-    plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200])
+    #plot_informative_electrodes(pers1, mean_informative_electrode, downsample=1000)
+    #plot_electrodes_activations__over_single_timestep(pers1[0].get_scans()[0], timestep=100, pre_processn=False)
+    #plot_electrodes_activations__over_single_timestep(pers1[0].get_scans()[0], timestep=100, pre_processn=True)
+    #plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=False)
+    #plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=True)
+    #plot_band_powers_over_electrodes(pers1[0].get_scans()[0])
+    plot_band_powers_over_time(pers1[0].get_scans()[0], electrode_idx=0)
