@@ -3,7 +3,6 @@ import data_utils
 import torch
 import torch.nn as nn
 import numpy as np
-import torch.optim as optim
 from scipy.signal import decimate
 
 class LongShortTermMemoryNetwork(nn.Module):
@@ -130,13 +129,11 @@ def test_model(model: LongShortTermMemoryNetwork, test_x, test_y, loss_function,
 
 # currently 2034 samples per second which times 17.5 for one scane is 35645 samples per scane,
 # which divided by 20 is approximatly 102 samples per second which times 17.5 is 1787 samples per scane
-def down_sample(context: read_data.DataSet, factor: int = 20):
-    for i in range(len(context.x_data)):
-        context.x_data[i] = decimate(
-            context.x_data[i],
-            factor,
-            axis=1
-        )
+def down_sample(context, factor=20):
+    context.x_data = [
+        decimate(x, factor, axis=1)
+        for x in context.x_data
+    ]
 
 def min_max_scaling(context):
     for i in range(len(context.x_data)):
@@ -171,46 +168,12 @@ def convert_data(down_sample, min_max_scaling, create_sequences, context):
 
     return X_tensor,y_tensor
 
-if __name__ == "__main__":
+def retrieve_context(parent_folder, subdirectory="Intra", type_of_data="train"):
+    persons = read_data.load_data_from_h5_files(parent_folder, subdirectory, type_of_data)
 
-    # ONE SUBJECT TRAINING AND TESTING
+    raw_scans = [person.get_scans()[i] for person in persons for i in range(len(person.get_scans()))]
+    x_data_train = np.array([scan.matrix for scan in raw_scans])
+    y_data_train = np.array([scan.task for scan in raw_scans])
 
-    parent_folder = "Final_project_data"
-    persons, x_data_train, y_data_train = read_data.load_data_from_h5_files(parent_folder, "Intra", "train")
     context_train = read_data.DataSet(persons, x_data_train, y_data_train)
-
-    X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
-
-    model = LongShortTermMemoryNetwork(input_size=X_tensor_train.shape[2], hidden_size=128, output_size=len(set(context_train.labels.values())))
-
-    train_model(model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(model.parameters(),lr=0.001), num_epochs=20)
-
-    persons_test, x_data_test, y_data_test = read_data.load_data_from_h5_files(parent_folder, "Intra", "test")
-    context_test = read_data.DataSet(persons_test, x_data_test, y_data_test)
-
-    X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
-
-    test_model(model, X_tensor_test, y_tensor_test, nn.CrossEntropyLoss())
-
-    # ONE SUBJECT TRAINING AND TESTING
-
-    # TWO SUBJECT TRAINING AND TESTING
-
-    persons_train, x_data_train, y_data_train = read_data.load_data_from_h5_files(parent_folder, "Cross", "train")
-    context_train = read_data.DataSet(persons_train, x_data_train, y_data_train)
-
-    X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
-
-    model = LongShortTermMemoryNetwork(input_size=X_tensor_train.shape[2], hidden_size=128, output_size=len(set(context_train.labels.values())))
-
-    train_model(model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(model.parameters(),lr=0.001), num_epochs=20)
-
-    persons_test, x_data_test, y_data_test = read_data.load_data_from_h5_files(parent_folder, "Cross", "test1")
-    context_test = read_data.DataSet(persons_test, x_data_test, y_data_test)
-
-    X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
-
-    test_model(model, X_tensor_test, y_tensor_test, nn.CrossEntropyLoss())
-
-    # TWO SUBJECT TRAINING AND TESTING
-
+    return context_train

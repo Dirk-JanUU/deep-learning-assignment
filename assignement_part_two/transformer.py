@@ -1,8 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
-from read_data import load_data_from_h5_files, ScanData
-from visualize_data import plot_electrode_activation_through_time, plot_electrodes_activations__over_single_timestep
+from read_data import load_data_from_h5_files
 from pre_process import pre_process
 
 def transformer_block(inputs, head_size, num_heads, ff_dim, dropout=0.1):

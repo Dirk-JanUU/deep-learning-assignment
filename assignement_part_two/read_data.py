@@ -1,5 +1,6 @@
 import h5py
 import os
+import numpy as np
 
 labels = {
     "rest": 0,
@@ -11,27 +12,33 @@ labels = {
 class DataSet:
     def __init__(self, persons, matrixes_data, matrixes_label):
         # ignore for now, but we can use it later to do person-specific statistical analysis (maybe out of scope)
-        self.persons = persons
+        self.persons: list[PersonData] = persons
 
-        self.x_data = matrixes_data
-        self.y_data = matrixes_label
-        self.labels = labels
+        self.x_data: list[np.ndarray] = matrixes_data
+        self.y_data: list[str] = matrixes_label
+        self.labels : dict[str, int] = labels
+
+class ScanData:
+    def __init__(self, id: str, task: str, matrix: np.ndarray):
+        self.id: str = id
+        self.task: str = task
+        self.matrix: np.ndarray = matrix
 
 class PersonData:
-    def __init__(self, id):
-        self.id = id
-        self.scans = []
+    def __init__(self, id: str):
+        self.id: str = id
+        self.scans: list[ScanData] = []
 
-    def add_scan(self, scan_data):
+    def add_scan(self, scan_data: ScanData):
         self.scans.append(scan_data)
 
     def get_scans(self):
         return self.scans
     
-    def get_scans_by_task_name(self, task_name):
+    def get_scans_by_task_name(self, task_name: str):
         return [scan for scan in self.scans if scan.task == task_name]
     
-    def get_scan_by_id(self, scan_id):
+    def get_scan_by_id(self, scan_id: str):
         for scan in self.scans:
             if scan.id == scan_id:
                 return scan
@@ -43,12 +50,6 @@ class PersonData:
         for scan in scans: 
             tasks_names.append(scan.get_task_name())
         return tasks_names
-
-class ScanData:
-    def __init__(self, id, task, matrix):
-        self.id = id
-        self.task = task
-        self.matrix = matrix
     
     def get_task_name(self): #returns alphabetic name of task
         return next(key for key, value in labels.items() if value == self.task)
@@ -92,14 +93,10 @@ def retrieve_file_name_info(file_path: str):
 def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory="Intra" , type_of_data = "test"):
     # Returns:
     # - persons : an array containing person ids
-    # - x_data : an array containing the brain recordings correlated to a task, the independent variable
-    # - y_data : contains the task name, the dependent variable, what we aim to predict 
     directrory_path = os.path.join(parent_directory, subdirectory, type_of_data)
     directrory_path = directrory_path.replace ('\\', '/')
 
     persons = []
-    x_data = []
-    y_data = []
 
     for filename in os.listdir(directrory_path):
         if filename.endswith('.h5'):
@@ -107,9 +104,6 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
             file_path = file_path.replace ('\\', '/')
             task_name, person_id, task_id = retrieve_file_name_info(filename)
             matrix = read_h5_file (file_path)
-
-            x_data.append(matrix)
-            y_data.append(task_name)
 
             scan_data = ScanData(id=task_id, task=task_name , matrix=matrix)
 

@@ -2,11 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from read_data import ScanData, load_data_from_h5_files
-from scipy.signal import find_peaks, peak_widths
-from scipy.ndimage import gaussian_filter1d
-
 from pre_process import pre_process
-
 
 TASK_MARKERS = {
     "rest": "o",
@@ -247,11 +243,10 @@ if __name__ == "__main__":
     pers5 = load_data_from_h5_files(parent_folder, "Intra", "train")
     pers6 = load_data_from_h5_files(parent_folder, "Intra", "test")
 
-    #plot_electrode(pers1, mean_informative_electrode, downsample=1000)
-    #plot_informative_electrodes(pers1, mean_informative_electrode, downsample=1000)
-    #plot_electrodes_activations__over_single_timestep(pers1[0].get_scans()[0], timestep=100, pre_processn=False)
-    #plot_electrodes_activations__over_single_timestep(pers1[0].get_scans()[0], timestep=100, pre_processn=True)
-    #plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=False)
-    #plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=True)
-    #plot_band_powers_over_electrodes(pers1[0].get_scans()[0])
+    # plot_informative_electrodes(pers1, mean_informative_electrode, downsample=1000)
+    # plot_electrodes_activations__over_single_timestep(pers1[0].get_scans()[0], timestep=100, pre_processn=False)
+    # plot_electrodes_activations__over_single_timestep(pers1[0].get_scans()[0], timestep=100, pre_processn=True)
+    # plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=False)
+    # plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=True)
+    # plot_band_powers_over_electrodes(pers1[0].get_scans()[0])
     plot_band_powers_over_time(pers1[0].get_scans()[0], electrode_idx=0)
