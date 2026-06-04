@@ -16,6 +16,15 @@ def silenced(func):
 # Or wrap an existing function on the fly
 # clean_preprocess = silenced(pre_process)
 
+def zero_mean(obj):
+    """
+    Applies zero-mean normalization across timesteps for each electrode.
+    Expects input shape: (electrodes, timesteps)
+    """
+    mean_per_channel = np.mean(obj.get_data(), axis=1, keepdims=True)
+    zero_meaned = obj.get_data() - mean_per_channel
+    return mne.io.RawArray(zero_meaned, obj.info)
+
 def downsample(raw_obj, factor):
     """
     Downsamples the MNE Raw object by a given factor based on the current sampling rate.
@@ -46,24 +55,37 @@ def normalization(scan_matrix, technique="minmax"):
         
     return normalized_T.T
 
-def normalization_3d(wavelet_output, technique="zscore"):
+def normalization_3d(wavelet_output, technique="minmax"):
     """
-    Normalizes a 3D wavelet array per frequency band.
-    
-    Parameters:
-    - wavelet_output: numpy array of shape (electrodes, bands, time)
-    - technique: "minmax" or "zscore"
-    
-    Returns:
-    - normalized array of shape (electrodes, bands, time)
+    Normalize each electrode-band time series independently.
+
+    Input shape: (electrodes, bands, timesteps).
+    For `minmax`: scales each (electrode, band) time series to [-1, 1].
+    For `zscore`: standardizes each (electrode, band) time series (mean=0, std=1).
+    Returns array with the same shape.
     """
-    output = wavelet_output.copy()
+
+    data = wavelet_output.astype(float)
+
+    if technique.lower() == "minmax":
+        mins = np.min(data, axis=2, keepdims=True)
+        maxs = np.max(data, axis=2, keepdims=True)
+        denom = maxs - mins
+        denom[denom == 0] = 1.0
+        scaled = (data - mins) / denom  # 0..1
+        normalized_3d = (scaled * 2.0) - 1.0  # -1..1
+
+    elif technique.lower() == "zscore":
+        means = np.mean(data, axis=2, keepdims=True)
+        stds = np.std(data, axis=2, keepdims=True)
+        stds[stds == 0] = 1.0
+        normalized_3d = (data - means) / stds
+
+    else:
+        raise ValueError("Technique must be 'minmax' or 'zscore'")
+
+    return normalized_3d
     
-    for b in range(output.shape[1]):
-        band_slice = output[:, b, :]  # (electrodes, time)
-        output[:, b, :] = normalization(band_slice, technique)
-    
-    return output
 
 def noise_reduction(raw_obj):
     """
@@ -194,21 +216,16 @@ def pre_process(scan, sfreq=2034, feature_extraction=False, downsample_factor=1,
     info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types)
     
     raw = mne.io.RawArray(scan, info)
+    denoised = noise_reduction(raw) # Apply noise reduction before downsampling to preserve signal quality for feature extraction, especially for Fourier and Wavelet analysis which are sensitive to noise.
+    downsampled = downsample(denoised, downsample_factor) # Downsample after noise reduction to preserve as much signal quality as possible for the Fourier Transform and Wavelet analysis, which are sensitive to noise. This way we reduce the data size for the model while keeping the most informative features intact.
+    zero_meaned = zero_mean(downsampled) # Shape: (electrodes, timesteps)
 
     # If only normalization is requested, skip noise reduction to save time
     if feature_extraction is False:
-        if downsample_factor > 1:
-            raw = downsample(raw, downsample_factor)
-
-        processed_matrix = raw.get_data()
-        output = normalization(processed_matrix, normalization_technique)
-        return output
+        return normalization(zero_meaned.get_data(), normalization_technique)
         
     elif feature_extraction.lower() == "fourier":
-        raw = noise_reduction(raw)
-        if downsample_factor > 1:
-            raw = downsample(raw, downsample_factor)
-        spectrum = raw.compute_psd(method='welch', fmin=0.5, fmax=100.0)
+        spectrum = zero_meaned.compute_psd(method='welch', fmin=0.5, fmax=100.0)
         psd, frequencies = spectrum.get_data(return_freqs=True)
 
         aggregated_bands = aggregate_bands(psd, frequencies, data_type="fourier")
@@ -217,27 +234,22 @@ def pre_process(scan, sfreq=2034, feature_extraction=False, downsample_factor=1,
         return aggregated_bands
         
     elif feature_extraction.lower() == "wavelets":
-        raw = noise_reduction(raw)
-        if downsample_factor > 1:
-            raw = downsample(raw, downsample_factor)
-        processed_matrix = raw.get_data()
-        # frequencies = np.arange(1, 101, 1)
-        frequencies = np.array([
-            # Delta
-            1, 2, 3,
-            # Theta
-            5, 6, 7,
-            # Alpha
-            9, 10, 11,
-            # Beta
-            15, 20, 25,
-            # Gamma
-            50, 70, 90
-        ])
-        epochs = mne.EpochsArray(processed_matrix[np.newaxis, ...], raw.info, verbose=False)
+        # Use denser sampling at low frequencies and wider steps at high frequencies
+        # Align sampling with the band definitions used in `aggregate_bands`
+        delta = np.arange(1, 4, 1)          # 1-3 Hz
+        theta = np.arange(4, 8, 1)          # 4-7 Hz
+        alpha = np.arange(8, 12, 2)         # 8-11 Hz (step 2 Hz)
+        beta = np.arange(12, 30, 4)         # 12-28 Hz (step 4 Hz)
+        gamma = np.arange(30, 101, 10)       # 30-100 Hz (step 10 Hz)
+        frequencies = np.concatenate([delta, theta, alpha, beta, gamma])
+        epochs = mne.EpochsArray(zero_meaned.get_data()[np.newaxis, ...], zero_meaned.info, verbose=False)
         
+        # Use more cycles at low frequencies for better frequency resolution,
+        # and fewer cycles at high frequencies for better temporal resolution.
+        # Use logarithmic spacing so cycles decrease faster across frequency.
+        n_cycles = np.logspace(np.log10(8.0), np.log10(3.0), len(frequencies))
         tfr = mne.time_frequency.tfr_morlet(
-            epochs, freqs=frequencies, n_cycles=frequencies / 2, 
+            epochs, freqs=frequencies, n_cycles=n_cycles,
             return_itc=False, average=True, verbose=False
         )
         
@@ -247,7 +259,7 @@ def pre_process(scan, sfreq=2034, feature_extraction=False, downsample_factor=1,
             tfr_data = tfr.data
 
         aggregated_bands = aggregate_bands(tfr_data, frequencies, data_type="wavelets")
-        print(f"Aggregated band powers shape: {aggregated_bands.shape} (electrodes, bands, time)")
+        #print(f"Aggregated band powers shape: {aggregated_bands.shape} (electrodes, bands, time)")
                 
         return normalization_3d(aggregated_bands, normalization_technique)
 

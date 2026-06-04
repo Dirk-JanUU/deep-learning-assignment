@@ -216,15 +216,17 @@ def plot_band_powers_over_electrodes(scan):
     plt.show()
 
 def plot_band_powers_over_time(scan, electrode_idx=0):
-    pre_processed_scan = pre_process(scan.matrix, sfreq=2034, feature_extraction="wavelets")
+    feature_technique = "wavelets"
+    pre_processed_scan = pre_process(scan.matrix, sfreq=2034, feature_extraction=feature_technique)
     band_names = ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
     
     electrode_data = pre_processed_scan[electrode_idx, :, :]
     
     plt.figure(figsize=(14, 8))
-    plt.title(f"Time-Frequency Power for Electrode {electrode_idx}")
+    plt.title(f"Time-Frequency Power for Electrode {electrode_idx} - {feature_technique.capitalize()} Transform")
     plt.xlabel("Time Samples")
-    plt.ylabel("Power (fT²)")
+    #plt.ylabel("Power (fT²)")
+    plt.ylabel(f"Normalized Power (minmax)")
     
     for i in range(electrode_data.shape[0]):
         plt.plot(electrode_data[i, :], label=f"{band_names[i]} Band", alpha=0.7)
@@ -237,16 +239,16 @@ def plot_band_powers_over_time(scan, electrode_idx=0):
 if __name__ == "__main__":
     parent_folder = "Final_project_data"
     pers1 = load_data_from_h5_files(parent_folder, "Cross", "train")
-    pers2 = load_data_from_h5_files(parent_folder, "Cross", "test1")
-    pers3 = load_data_from_h5_files(parent_folder, "Cross", "test2")
-    pers4 = load_data_from_h5_files(parent_folder, "Cross", "test3")
-    pers5 = load_data_from_h5_files(parent_folder, "Intra", "train")
-    pers6 = load_data_from_h5_files(parent_folder, "Intra", "test")
+    #pers2 = load_data_from_h5_files(parent_folder, "Cross", "test1")
+    #pers3 = load_data_from_h5_files(parent_folder, "Cross", "test2")
+    #pers4 = load_data_from_h5_files(parent_folder, "Cross", "test3")
+    #pers5 = load_data_from_h5_files(parent_folder, "Intra", "train")
+    #pers6 = load_data_from_h5_files(parent_folder, "Intra", "test")
 
     # plot_informative_electrodes(pers1, mean_informative_electrode, downsample=1000)
     # plot_electrodes_activations__over_single_timestep(pers1[0].get_scans()[0], timestep=100, pre_processn=False)
     # plot_electrodes_activations__over_single_timestep(pers1[0].get_scans()[0], timestep=100, pre_processn=True)
     # plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=False)
-    # plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=True)
+    #plot_electrode_activation_through_time(pers1[0].get_scans()[0], [0, 50, 200], pre_processn=True)
     # plot_band_powers_over_electrodes(pers1[0].get_scans()[0])
     plot_band_powers_over_time(pers1[0].get_scans()[0], electrode_idx=0)
