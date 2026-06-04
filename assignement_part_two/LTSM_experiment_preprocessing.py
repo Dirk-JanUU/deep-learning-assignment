@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from LTSM_network import LongShortTermMemoryNetwork, retrieve_context, test_model, train_model
-import pre_process
+from pre_process import pre_process
 import numpy as np
 import torch.optim as optim
 

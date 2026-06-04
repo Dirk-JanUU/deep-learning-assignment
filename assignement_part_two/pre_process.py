@@ -221,7 +221,19 @@ def pre_process(scan, sfreq=2034, feature_extraction=False, downsample_factor=1,
         if downsample_factor > 1:
             raw = downsample(raw, downsample_factor)
         processed_matrix = raw.get_data()
-        frequencies = np.arange(1, 101, 1) 
+        # frequencies = np.arange(1, 101, 1)
+        frequencies = np.array([
+            # Delta
+            1, 2, 3,
+            # Theta
+            5, 6, 7,
+            # Alpha
+            9, 10, 11,
+            # Beta
+            15, 20, 25,
+            # Gamma
+            50, 70, 90
+        ])
         epochs = mne.EpochsArray(processed_matrix[np.newaxis, ...], raw.info, verbose=False)
         
         tfr = mne.time_frequency.tfr_morlet(

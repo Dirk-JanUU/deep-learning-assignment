@@ -6,7 +6,7 @@ import numpy as np
 from scipy.signal import decimate
 
 class LongShortTermMemoryNetwork(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size = 4, layers = 2, dropout=0.2):
+    def __init__(self, input_size, hidden_size, output_size = 4, layers = 1, dropout=0.2):
         super(LongShortTermMemoryNetwork, self).__init__()
 
         self.input_size = input_size
@@ -22,7 +22,6 @@ class LongShortTermMemoryNetwork(nn.Module):
             nn.Linear(hidden_size, 128),
             nn.ReLU(),
             nn.Dropout(dropout),
-
             nn.Linear(128, output_size)
         )
 
