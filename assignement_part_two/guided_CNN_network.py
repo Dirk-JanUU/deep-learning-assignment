@@ -109,7 +109,10 @@ if __name__ == "__main__":
     cnn_model = ConvolutionalNeuralNetwork(input_size=X_tensor_train.shape[2], output_size=len(set(context_train.labels.values())))
     train_model(cnn_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), torch.optim.Adam(cnn_model.parameters(), lr=0.001), num_epochs=20)
 
+    print("Evaluating Guided CNN layer:")
     print(guided_cnn_model.features)
+
+    print("Evaluating CNN layer:")
     print(cnn_model.features)
 
     with torch.no_grad():
