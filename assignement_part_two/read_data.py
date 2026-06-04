@@ -100,12 +100,7 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
 
     for filename in os.listdir(directrory_path):
         if filename.endswith('.h5'):
-            file_path = os.path.join(directrory_path, filename)
-            file_path = file_path.replace ('\\', '/')
-            task_name, person_id, task_id = retrieve_file_name_info(filename)
-            matrix = read_h5_file (file_path)
-
-            scan_data = ScanData(id=task_id, task=task_name , matrix=matrix)
+            person_id, scan_data = load_scan(directrory_path, filename)
 
             if not any(person.id == person_id for person in persons):
                 new_person = PersonData(id=person_id)
@@ -114,6 +109,30 @@ def load_data_from_h5_files(parent_directory="Final_project_data", subdirectory=
             person = next(person for person in persons if person.id == person_id)
             person.add_scan(scan_data)
     return  persons
+
+def load_data_from_h5_file(parent_directory="Final_project_data", subdirectory="Intra" , type_of_data = "test", filename = "rest_1_1.h5"):
+    directrory_path = os.path.join(parent_directory, subdirectory, type_of_data)
+    directrory_path = directrory_path.replace ('\\', '/')
+    file_path = os.path.join(directrory_path, filename)
+    file_path = file_path.replace ('\\', '/')
+    task_name, person_id, task_id = retrieve_file_name_info(filename)
+    matrix = read_h5_file (file_path)
+
+    scan_data = ScanData(id=task_id, task=task_name , matrix=matrix)
+
+    person = PersonData(id=person_id)
+    person.add_scan(scan_data)
+
+    return person
+
+def load_scan(directrory_path, filename):
+    file_path = os.path.join(directrory_path, filename)
+    file_path = file_path.replace ('\\', '/')
+    task_name, person_id, task_id = retrieve_file_name_info(filename)
+    matrix = read_h5_file (file_path)
+
+    scan_data = ScanData(id=task_id, task=task_name , matrix=matrix)
+    return person_id,scan_data
 
 if __name__ == "__main__":
     subdirectory = "Intra"

@@ -167,8 +167,12 @@ def convert_data(down_sample, min_max_scaling, create_sequences, context):
 
     return X_tensor,y_tensor
 
-def retrieve_context(parent_folder, subdirectory="Intra", type_of_data="train"):
-    persons = read_data.load_data_from_h5_files(parent_folder, subdirectory, type_of_data)
+def retrieve_context(parent_folder, subdirectory="Intra", type_of_data="train",filename = None):
+    if filename:
+        person = read_data.load_data_from_h5_file(parent_folder, subdirectory, type_of_data, filename)
+        persons = [person]
+    else:
+        persons = read_data.load_data_from_h5_files(parent_folder, subdirectory, type_of_data)
 
     raw_scans = [person.get_scans()[i] for person in persons for i in range(len(person.get_scans()))]
     x_data_train = np.array([scan.matrix for scan in raw_scans])
