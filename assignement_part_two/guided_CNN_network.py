@@ -17,35 +17,60 @@ class WaveletConv1D(nn.Module):
         super().__init__()
 
         wavelet = pywt.Wavelet('db4')
-        filt = np.array(wavelet.dec_lo)
+        filter_decomposition_low_pass = np.array(wavelet.dec_lo)
+        filter_decomposition_high_pass = np.array(wavelet.dec_hi)
 
         self.in_channels = in_channels
 
-        self.conv = nn.Conv1d(
+        self.conv_low_pass = nn.Conv1d(
             in_channels=in_channels,
             out_channels=in_channels * 5,
-            kernel_size=len(filt),
+            kernel_size=len(filter_decomposition_low_pass),
+            padding="same",
+            bias=False
+        )
+
+        self.conv_high_pass = nn.Conv1d(
+            in_channels=in_channels,
+            out_channels=in_channels * 5,
+            kernel_size=len(filter_decomposition_high_pass),
             padding="same",
             bias=False
         )
 
         with torch.no_grad():
 
-            self.conv.weight.zero_()
+            self.conv_low_pass.weight.zero_()
 
             for ch in range(in_channels):
                 for band in range(5):
 
                     out_idx = ch * 5 + band
 
-                    self.conv.weight[
+                    self.conv_low_pass.weight[
                         out_idx,
                         ch,
                         :
-                    ] = torch.tensor(filt)
+                    ] = torch.tensor(filter_decomposition_low_pass)
+
+            self.conv_high_pass.weight.zero_()
+
+            for ch in range(in_channels):
+                for band in range(5):
+
+                    out_idx = ch * 5 + band
+
+                    self.conv_high_pass.weight[
+                        out_idx,
+                        ch,
+                        :
+                    ] = torch.tensor(filter_decomposition_high_pass)
 
     def forward(self, x):
-        return self.conv(x)
+        low_pass = self.conv_low_pass(x)
+        high_pass = self.conv_high_pass(x)
+
+        return low_pass + high_pass
     
 class WaveletCNN(nn.Module):
     def __init__(self, input_size, output_size=128):
@@ -146,7 +171,7 @@ def rsa(matrix1, matrix2, distance_metric='correlation'):
     return rsa_corr, p_value, rdm1, rdm2
 
 if __name__ == "__main__":
-    context_train = retrieve_context(parent_folder="Final_project_data", subdirectory="Intra", type_of_data="train", filename="rest_105923_1.h5")
+    context_train = retrieve_context(parent_folder="Final_project_data", subdirectory="Intra", type_of_data="train")
     X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
 
     feature_technique = "wavelets"
@@ -177,9 +202,17 @@ if __name__ == "__main__":
         
     guided_cnn_model = GuidedCNN(guided=WaveletConv1D(X_tensor_train.shape[2]),input_size=X_tensor_train.shape[2], output_size=len(set(context_train.labels.values())))
     train_model(guided_cnn_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), torch.optim.Adam(guided_cnn_model.parameters(), lr=0.001), num_epochs=20)
+    
+    context_test = retrieve_context(parent_folder="Final_project_data", subdirectory="Intra", type_of_data="test")
+    
+    X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
+
+    test_model(guided_cnn_model, X_tensor_test, y_tensor_test, nn.CrossEntropyLoss())
 
     cnn_model = StandardCNN(input_size=X_tensor_train.shape[2], output_size=len(set(context_train.labels.values())))
     train_model(cnn_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), torch.optim.Adam(cnn_model.parameters(), lr=0.001), num_epochs=20)
+    
+    test_model(cnn_model, X_tensor_test, y_tensor_test, nn.CrossEntropyLoss())
 
     with torch.no_grad():
 
