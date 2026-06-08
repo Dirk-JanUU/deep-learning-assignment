@@ -87,7 +87,7 @@ def normalization_3d(wavelet_output, technique="minmax"):
     return normalized_3d
     
 
-def noise_reduction(raw_obj):
+def noise_reduction(raw_obj, ica=False):
     """
     Applies statistical artifact reduction, bandpass filtering, 
     and ICA to clear eye blinks and muscle artifacts without needing geometry.
@@ -126,42 +126,44 @@ def noise_reduction(raw_obj):
         for ch in bad_channels:
             ch_idx = raw_obj.ch_names.index(ch)
             raw_obj._data[ch_idx, :] = 0.0 # Clear out noisy channels so they don't break the Fourier Transform
+
     
-    # 3. Independent Component Analysis (ICA) for Eye Blinks and Body Movements
-    #print("Running ICA for ocular and motor artifact rejection...")
-    
-    # Removed 'tol' to fix the TypeError, kept max_iter high for your MacBook Air
-    ica = mne.preprocessing.ICA(n_components=0.95, random_state=42, method='fastica', max_iter=1000)
-    ica.fit(raw_obj)
-    
-    #print("Automatically identifying artifact components using statistical heuristics...")
-    
-    # Extract the independent component source time-series
-    ica_sources = ica.get_sources(raw_obj).get_data() # shape: (components, timesteps)
-    
-    # --- HEURISTIC 1: KCC (Kurtosis) to detect Eye Blinks ---
-    from scipy.stats import kurtosis
-    kurt_scores = kurtosis(ica_sources, axis=1)
-    kurt_threshold = np.median(kurt_scores) + (3 * np.std(kurt_scores))
-    blink_idx = np.where(kurt_scores > kurt_threshold)[0]
-    
-    # --- HEURISTIC 2: High-Frequency Variance to detect Muscle Bursts ---
-    fft_vals = np.abs(np.fft.rfft(ica_sources, axis=1))
-    freqs = np.fft.rfftfreq(ica_sources.shape[1], d=1.0/raw_obj.info['sfreq'])
-    
-    high_freq_mask = freqs > 40.0
-    muscle_scores = np.mean(fft_vals[:, high_freq_mask], axis=1)
-    muscle_threshold = np.median(muscle_scores) + (3 * np.std(muscle_scores))
-    muscle_idx = np.where(muscle_scores > muscle_threshold)[0]
-    
-    # Combine both lists of bad components safely
-    bad_components = list(set(list(blink_idx) + list(muscle_idx)))
-    
-    ica.exclude = bad_components
-    #print(f"Excluding {len(bad_components)} ICA components (Blinks: {len(blink_idx)}, Muscle: {len(muscle_idx)}).")
-    
-    # Apply the ICA cleaning to the data
-    raw_obj = ica.apply(raw_obj)
+    if ica:
+        # 3. Independent Component Analysis (ICA) for Eye Blinks and Body Movements
+        #print("Running ICA for ocular and motor artifact rejection...")
+        
+        # Removed 'tol' to fix the TypeError, kept max_iter high for your MacBook Air
+        ica = mne.preprocessing.ICA(n_components=0.95, random_state=42, method='fastica', max_iter=1000)
+        ica.fit(raw_obj)
+        
+        #print("Automatically identifying artifact components using statistical heuristics...")
+        
+        # Extract the independent component source time-series
+        ica_sources = ica.get_sources(raw_obj).get_data() # shape: (components, timesteps)
+        
+        # --- HEURISTIC 1: KCC (Kurtosis) to detect Eye Blinks ---
+        from scipy.stats import kurtosis
+        kurt_scores = kurtosis(ica_sources, axis=1)
+        kurt_threshold = np.median(kurt_scores) + (3 * np.std(kurt_scores))
+        blink_idx = np.where(kurt_scores > kurt_threshold)[0]
+        
+        # --- HEURISTIC 2: High-Frequency Variance to detect Muscle Bursts ---
+        fft_vals = np.abs(np.fft.rfft(ica_sources, axis=1))
+        freqs = np.fft.rfftfreq(ica_sources.shape[1], d=1.0/raw_obj.info['sfreq'])
+        
+        high_freq_mask = freqs > 40.0
+        muscle_scores = np.mean(fft_vals[:, high_freq_mask], axis=1)
+        muscle_threshold = np.median(muscle_scores) + (3 * np.std(muscle_scores))
+        muscle_idx = np.where(muscle_scores > muscle_threshold)[0]
+        
+        # Combine both lists of bad components safely
+        bad_components = list(set(list(blink_idx) + list(muscle_idx)))
+        
+        ica.exclude = bad_components
+        #print(f"Excluding {len(bad_components)} ICA components (Blinks: {len(blink_idx)}, Muscle: {len(muscle_idx)}).")
+        
+        # Apply the ICA cleaning to the data
+        raw_obj = ica.apply(raw_obj)
     return raw_obj
 
 def aggregate_bands(frequency_data, frequencies, data_type="fourier"):
