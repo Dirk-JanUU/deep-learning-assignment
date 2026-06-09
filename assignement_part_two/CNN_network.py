@@ -48,7 +48,7 @@ class ConvolutionalNeuralNetwork(nn.Module):
     def forward(self, x):
  
         # Conv1d expects [batch, channels, length] -> [batch, electrodes, time]
-        x = x.permute(0, 2, 1)
+        #x = x.permute(0, 2, 1)
  
         out = self.features(x)
  

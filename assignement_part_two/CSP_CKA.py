@@ -13,8 +13,8 @@ Dependencies
 """
 
 from __future__ import annotations
+import data_utils
 from read_data import load_data_from_h5_files
-from pre_process import pre_process
 from CNN_network import ConvolutionalNeuralNetwork
 
 import matplotlib
@@ -26,6 +26,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from scipy.linalg import eigh
+from scipy.signal import decimate
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, TensorDataset
@@ -53,6 +54,19 @@ def linear_cka(X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
     # but float32 can drift slightly above when correlation is near-perfect.
     return torch.clamp(num / (den + 1e-10), 0.0, 1.0)
 
+def down_sample(scans: list[np.ndarray], factor: int = 20) -> list[np.ndarray]:
+    """Downsample each scan along the time axis (axis=1)."""
+    return [decimate(scan, factor, axis=1) for scan in scans]
+
+
+def min_max_scale(scans: list[np.ndarray]) -> list[np.ndarray]:
+    """Min-max scale each scan independently across electrodes × timesteps."""
+    scaled = []
+    for scan in scans:
+        scaler = data_utils.DataScaler()
+        scaler.fit(scan)
+        scaled.append(scaler.transform(scan))
+    return scaled
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Multiclass CSP  (One-vs-Rest)
@@ -70,6 +84,7 @@ class MulticlassCSP:
         Sp = np.mean([_normalized_cov(x) for x in X_pos], axis=0)
         Sn = np.mean([_normalized_cov(x) for x in X_neg], axis=0)
         Sc = Sp + Sn
+        Sc += np.eye(Sc.shape[0]) * 1e-6  # regularize
         eigvals, eigvecs = eigh(Sp, Sc)            # ascending
         m = self.n_filters
         idx = np.concatenate([np.arange(m), np.arange(-m, 0)])
@@ -155,6 +170,7 @@ class StandardCNN(nn.Module):
         )
 
     def forward(self, x):
+        #x = x.permute(0, 2, 1)
         x = self.first_layer(x)
         x = self.backbone(x)
         return self.classifier(x)
@@ -178,6 +194,7 @@ class CSP_CNN(nn.Module):
         self,
         csp_filters: torch.Tensor,    # (n_csp, n_channels)
         output_size: int = 4,
+        dropout: float = 0.3
     ):
         super().__init__()
         n_csp, n_channels = csp_filters.shape
@@ -205,8 +222,7 @@ class CSP_CNN(nn.Module):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSP-Guided CNN
-#   Architecture mimics CSP operations.  No CSP weight transfer — standard
-#   (random) PyTorch initialisation, identical scheme to StandardCNN.
+#   Architecture mimics CSP operations. 
 #   The hypothesis: does this structural inductive bias alone push the
 #   network to learn CSP-like representations under gradient descent?
 # ─────────────────────────────────────────────────────────────────────────────
@@ -294,8 +310,8 @@ def train_model(
     y_t = torch.tensor(y_enc,   dtype=torch.long)
     loader = DataLoader(TensorDataset(X_t, y_t), batch_size=batch_size, shuffle=True)
 
-    model.train()
     for epoch in range(epochs):
+        model.train()
         running = 0.0
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
@@ -304,8 +320,11 @@ def train_model(
             loss.backward()
             optimizer.step()
             running += loss.item()
-        if (epoch + 1) % 10 == 0:
-            print(f"  epoch {epoch+1:>3}/{epochs}  loss={running/len(loader):.4f}")
+        avg_loss = running / len(loader)
+        print(
+            f"Epoch [{epoch+1}/{epochs}] "
+            f"Loss: {avg_loss:.4f}"
+        )
     return model, le
 
 
@@ -325,42 +344,47 @@ def _extract_layer_activations(
     model: nn.Module,
     X_tensor: torch.Tensor,
     device: str = "cpu",
-    batch_size: int = 32, # Increased from 1 for much faster evaluation
+    batch_size: int = 32,
 ) -> dict[str, torch.Tensor]:
     """
-    Run `model` on `X_tensor` and extract activations from each layer,
-    ensuring they are flattened to (B, Features) for CKA compatibility.
+    Run `model` on `X_tensor` and extract activations from every layer,
+    flattened to (B, Features) for CKA compatibility.
+    Works with any architecture (CNN, MLP, Transformer, etc.).
     """
-    model = model.to(device)
-    model.eval() # Ensure model is in eval mode
+    model = model.to(device).eval()
     loader = DataLoader(TensorDataset(X_tensor), batch_size=batch_size, shuffle=False)
 
-    activations = {"features": [], "pool": [], "hidden": [], "logits": []}
-    
-    with torch.no_grad():
-        for xb, in loader:
-            xb = xb.to(device)
-            
-            # 1. Features Layer
-            x_feat = model.first_layer(xb)
-            # Flatten spatial/temporal dims: (B, C, T) -> (B, C * T)
-            activations["features"].append(x_feat.flatten(1).cpu())
-            
-            # 2. Backbone / Pool Layer
-            x_back = model.backbone(x_feat)
-            # Flatten spatial/temporal dims: (B, C, T) -> (B, C * T)
-            activations["pool"].append(x_back.flatten(1).cpu())
-            
-            # 3. Hidden Layer
-            x_flat = model.classifier[0](x_back)  # Flatten
-            x_hidden = model.classifier[1](x_flat)  # Linear
-            activations["hidden"].append(x_hidden.cpu())
-            
-            # 4. Logits
-            x_logits = model.classifier[2:](x_hidden)  # ReLU + Dropout + Linear
-            activations["logits"].append(x_logits.cpu())
+    # Collect all leaf modules (the actual compute layers, not containers)
+    named_leaves = [
+        (name, module)
+        for name, module in model.named_modules()
+        if len(list(module.children())) == 0 and name != ""
+    ]
 
-    return {k: torch.cat(v, dim=0) for k, v in activations.items()}
+    # Register forward hooks
+    activations: dict[str, list[torch.Tensor]] = {name: [] for name, _ in named_leaves}
+    hooks = []
+
+    def make_hook(name):
+        def hook_fn(module, input, output):
+            # Handle modules that return tuples (e.g. transformer layers, LSTM)
+            out = output[0] if isinstance(output, (tuple, list)) else output
+            activations[name].append(out.detach().flatten(1).cpu())
+        return hook_fn
+
+    for name, module in named_leaves:
+        hooks.append(module.register_forward_hook(make_hook(name)))
+
+    # Forward pass
+    with torch.no_grad():
+        for (xb,) in loader:
+            model(xb.to(device))
+
+    # Cleanup hooks
+    for h in hooks:
+        h.remove()
+
+    return {name: torch.cat(tensors, dim=0) for name, tensors in activations.items()}
 
 
 def CSP_CKA_similarity(
@@ -374,55 +398,51 @@ def CSP_CKA_similarity(
 ) -> dict[str, float]:
     """
     Compare CSP-derived representations against each layer of `model`
-    using linear CKA. Saves a bar plot to {save_dir}/cka_{model_name}.png.
+    using linear CKA. Works with any architecture.
 
     Parameters
     ----------
-    model        : StandardCNN-like model with .features, .pool, .classifier
+    model        : any nn.Module
     csp_filters  : (n_csp, n_channels) tensor of CSP spatial filters
-    X_data       : (n_trials, n_channels, n_times) — typically test set
-    model_name   : label used in title & filename
-    layer_labels : optional override for x-axis labels.  Keys must be
-                   {"features", "pool", "hidden", "logits"}.
-                   Defaults to generic role-based labels.
+    X_data       : (n_trials, n_channels, n_times)
+    layer_labels : optional {layer_name: display_label} override for x-axis
     """
     device = torch.device(device)
 
-    # ── 1. CSP reference representation: apply filters to input ───────────
+    # ── 1. CSP reference representation ───────────────────────────────────
     X_t = torch.tensor(X_data, dtype=torch.float32).to(device)
-    csp_w = csp_filters.to(device).unsqueeze(-1)        # (n_csp, C, 1)
+    csp_w = csp_filters.to(device).unsqueeze(-1)
     with torch.no_grad():
-        csp_signals = F.conv1d(X_t, csp_w)              # (B, n_csp, T)
-    csp_ref = csp_signals.flatten(1).cpu()              # (B, n_csp · T)
+        csp_signals = F.conv1d(X_t, csp_w)
+    csp_ref = csp_signals.flatten(1).cpu()
 
-    # ── 2. Activations from each layer of the model ──────────────────────
+    # ── 2. Extract activations from every leaf layer ─────────────────────
     acts = _extract_layer_activations(model, X_t.cpu(), device=str(device))
 
-    # ── 3. CKA against CSP reference ─────────────────────────────────────
-    layer_order = ["features", "pool", "hidden", "logits"]
-    default_labels = {
-        "features": "features block",
-        "pool":     "pool block",
-        "hidden":   "classifier hidden",
-        "logits":   "logits",
+    # ── 3. CKA scores ───────────────────────────────────────────────────
+    layer_names = list(acts.keys())
+    scores = {
+        name: float(linear_cka(acts[name], csp_ref).item())
+        for name in layer_names
     }
-    labels_map = layer_labels if layer_labels is not None else default_labels
-    scores = {name: float(linear_cka(acts[name], csp_ref).item())
-              for name in layer_order}
 
     # ── 4. Plot ──────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(9, 5))
-    values = [scores[n] for n in layer_order]
-    labels = [labels_map[n] for n in layer_order]
-    colours = ["#3776AB", "#9B6DD8", "#E8924A", "#3DB37C"]
-    bars = ax.bar(labels, values, color=colours)
+    labels_map = layer_labels or {}
+    labels = [labels_map.get(n, n) for n in layer_names]
+    values = [scores[n] for n in layer_names]
+
+    fig, ax = plt.subplots(figsize=(max(9, len(layer_names) * 1.2), 5))
+    colours = plt.cm.viridis(np.linspace(0.2, 0.85, len(layer_names)))
+    bars = ax.bar(range(len(values)), values, color=colours)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
     ax.set_ylim(0, 1.05)
     ax.set_ylabel("Linear CKA  (CSP vs. layer)", fontsize=12)
     ax.set_title(f"{model_name}: CKA similarity to CSP per layer", fontsize=13)
     ax.grid(axis="y", alpha=0.3)
     for bar, v in zip(bars, values):
         ax.text(bar.get_x() + bar.get_width() / 2, v + 0.02,
-                f"{v:.3f}", ha="center", fontsize=11)
+                f"{v:.3f}", ha="center", fontsize=9)
     plt.tight_layout()
     fname = f"{save_dir}/cka_{model_name.replace(' ', '_')}.png"
     plt.savefig(fname, dpi=120)
@@ -436,6 +456,11 @@ def CSP_CKA_similarity(
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--CKA", type=bool, default=False, help="Run CKA analysis and plotting (takes a while)")
+    args = parser.parse_args()
+    
     EPOCHS     = 30
     BATCH_SIZE = 1
     DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
@@ -444,12 +469,25 @@ if __name__ == "__main__":
     train_persons = load_data_from_h5_files(subdirectory="Intra", type_of_data="train")
     test_persons  = load_data_from_h5_files(subdirectory="Intra", type_of_data="test")
 
+    #train_persons = load_data_from_h5_files(subdirectory="Cross", type_of_data="train")
+    #test_persons  = load_data_from_h5_files(subdirectory="Cross", type_of_data="test1")
+    #test_persons  = load_data_from_h5_files(subdirectory="Cross", type_of_data="test2")
+    #test_persons  = load_data_from_h5_files(subdirectory="Cross", type_of_data="test3")
+
     train_scans = [scan for p in train_persons for scan in p.get_scans()]
     test_scans  = [scan for p in test_persons  for scan in p.get_scans()]
 
     # Expected shape: (n_trials, n_channels, n_times)
-    X_train, y_train = np.array([pre_process(scan.matrix, downsample_factor = 100) for scan in train_scans]), np.array([scan.task for scan in train_scans])
-    X_test,  y_test  = np.array([pre_process(scan.matrix, downsample_factor = 100) for scan in test_scans]), np.array([scan.task for scan in test_scans])
+    #X_train, y_train = np.array([down_sample(min_max_scaling(scan.matrix) , downsample_factor = 20) for scan in train_scans]), np.array([scan.task for scan in train_scans])
+    #X_test,  y_test  = np.array([down_sample(min_max_scaling(scan.matrix), downsample_factor = 20) for scan in test_scans]), np.array([scan.task for scan in test_scans])
+    #X_train, y_train = np.array([pre_process(scan.matrix, downsample_factor = 100) for scan in train_scans]), np.array([scan.task for scan in train_scans])
+    #X_test,  y_test  = np.array([pre_process(scan.matrix, downsample_factor = 100) for scan in test_scans]), np.array([scan.task for scan in test_scans])
+
+    #X_train, y_train = np.array(normalization([downsample(scan.matrix, factor = 20) for scan in train_scans])), np.array([scan.task for scan in train_scans])
+    #X_test,  y_test  = np.array(normalization([downsample(scan.matrix, factor = 20) for scan in test_scans])), np.array([scan.task for scan in test_scans])
+
+    X_train, y_train = np.array(min_max_scale(down_sample([scan.matrix for scan in train_scans], factor=50))), np.array([scan.task for scan in train_scans])
+    X_test,  y_test  = np.array(min_max_scale(down_sample([scan.matrix for scan in test_scans], factor=50))), np.array([scan.task for scan in test_scans])
 
     N_CHANNELS = X_train[0].shape[0]
     N_CLASSES  = len(set(y_train))
@@ -465,54 +503,54 @@ if __name__ == "__main__":
 
     # ── Train all three models ────────────────────────────────────────────
     print("=" * 60); print("Training StandardCNN"); print("=" * 60)
-    std_model = StandardCNN(input_size=N_CHANNELS, output_size=N_CLASSES)
+    std_model = ConvolutionalNeuralNetwork(input_size=N_CHANNELS, output_size=N_CLASSES)
     std_model, le_std = train_model(std_model, X_train, y_train,
                                     EPOCHS, BATCH_SIZE, device=DEVICE)
     acc_std = evaluate_model(std_model, X_test, y_test, le_std, DEVICE)
+    print(f"StandardCNN test accuracy: {acc_std:.4f}")
 
     print("\n" + "=" * 60); print("Training CSP + CNN"); print("=" * 60)
     csp_cnn = CSP_CNN(csp_filters=csp_filters, output_size=N_CLASSES)
     csp_cnn, le_csp = train_model(csp_cnn, X_train, y_train,
                                   EPOCHS, BATCH_SIZE, device=DEVICE)
     acc_csp_cnn = evaluate_model(csp_cnn, X_test, y_test, le_csp, DEVICE)
+    print(f"CSP + CNN test accuracy: {acc_csp_cnn:.4f}")
 
     print("\n" + "=" * 60); print("Training CSP-guided CNN"); print("=" * 60)
     csp_guided = CSPGuidedCNN(input_size=N_CHANNELS, output_size=N_CLASSES)
     csp_guided, le_g = train_model(csp_guided, X_train, y_train,
                                    EPOCHS, BATCH_SIZE, device=DEVICE)
     acc_csp_guided = evaluate_model(csp_guided, X_test, y_test, le_g, DEVICE)
+    print(f"CSP-guided CNN test accuracy: {acc_csp_guided:.4f}")
+
 
     # ── CKA similarity per layer  (2 plots) ──────────────────────────────
-    print("\n" + "=" * 60); print("CKA similarity analysis"); print("=" * 60)
+    if args.CKA == True:
+        # With custom labels if you want cleaner x-axis names
+        std_labels = {
+            "features.0": "Conv1d k=7",
+            "features.1": "BatchNorm",
+            "features.2": "ReLU",
+            "pool":       "AvgPool",
+            "classifier.1": "Linear(128)",
+            "classifier.3": "Linear(logits)",
+        }
+        scores_std = CSP_CKA_similarity(std_model, csp_filters, X_test,
+                                        model_name="StandardCNN", device=DEVICE)
 
-    std_labels = {
-        "features": "Conv1d k=7\n+ BN + ReLU",
-        "pool":     "AdaptiveAvgPool",
-        "hidden":   "Linear + ReLU\n(128 hidden)",
-        "logits":   "Linear\n(logits)",
-    }
-    guided_labels = {
-        "features": "Conv1d k=1\n+ BN",
-        "pool":     "Square → Pool\n→ Log",
-        "hidden":   "Linear + ReLU\n(128 hidden)",
-        "logits":   "Linear\n(logits)",
-    }
-    scores_std = CSP_CKA_similarity(std_model, csp_filters, X_test,
-                                    model_name="StandardCNN", device=DEVICE,
-                                    layer_labels=std_labels)
-    scores_g   = CSP_CKA_similarity(csp_guided, csp_filters, X_test,
-                                    model_name="CSP-guided CNN", device=DEVICE,
-                                    layer_labels=guided_labels)
+        # Without custom labels (uses layer names like "lstm", "norm", "classifier.0", etc.)
+        scores_g = CSP_CKA_similarity(csp_guided, csp_filters, X_test,
+                                        model_name="CSP-guided CNN", device=DEVICE)
 
-    # ── Summary ──────────────────────────────────────────────────────────
-    print("\n" + "=" * 60); print("SUMMARY"); print("=" * 60)
-    print("Test accuracy:")
-    print(f"  StandardCNN     : {acc_std:.4f}")
-    print(f"  CSP + CNN       : {acc_csp_cnn:.4f}")
-    print(f"  CSP-guided CNN  : {acc_csp_guided:.4f}")
-    print("\nLayer-wise CKA  (CSP-guided CNN):")
-    for k, v in scores_g.items():
-        print(f"  {k:>8s} : {v:.4f}")
-    print("\nLayer-wise CKA  (StandardCNN):")
-    for k, v in scores_std.items():
-        print(f"  {k:>8s} : {v:.4f}")
+        # ── Summary ──────────────────────────────────────────────────────────
+        print("\n" + "=" * 60); print("SUMMARY"); print("=" * 60)
+        print("Test accuracy:")
+        print(f"  StandardCNN     : {acc_std:.4f}")
+        print(f"  CSP + CNN       : {acc_csp_cnn:.4f}")
+        print(f"  CSP-guided CNN  : {acc_csp_guided:.4f}")
+        print("\nLayer-wise CKA  (CSP-guided CNN):")
+        for k, v in scores_g.items():
+            print(f"  {k:>8s} : {v:.4f}")
+        print("\nLayer-wise CKA  (StandardCNN):")
+        for k, v in scores_std.items():
+            print(f"  {k:>8s} : {v:.4f}")
