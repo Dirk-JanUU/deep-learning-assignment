@@ -1,274 +1,291 @@
-from sympy import im
-import torch.nn as nn
-import numpy as np
-from scipy.spatial.distance import pdist, squareform
-from scipy.stats import spearmanr
 import torch
 import torch.nn as nn
-import pywt
 import numpy as np
-from CNN_network import ConvolutionalNeuralNetwork
-from LTSM_network import train_model, test_model
-from LTSM_network import convert_data, create_sequences, down_sample, min_max_scaling, retrieve_context
+import pywt
+from scipy.spatial.distance import pdist, squareform
+from scipy.stats import spearmanr
+from torch.utils.data import DataLoader, TensorDataset
+from matplotlib import pyplot as plt
+from LTSM_network import (
+    train_model, test_model,
+    convert_data, create_sequences,
+    down_sample, min_max_scaling, retrieve_context
+)
 from pre_process import pre_process
+
+def normalize(x: np.ndarray):
+    x = x - x.mean(axis=1, keepdims=True)
+    x = x / (x.std(axis=1, keepdims=True) + 1e-8)
+    return x
+
 
 class WaveletConv1D(nn.Module):
     def __init__(self, in_channels):
         super().__init__()
 
         wavelet = pywt.Wavelet('db4')
-        filter_decomposition_low_pass = np.array(wavelet.dec_lo)
-        filter_decomposition_high_pass = np.array(wavelet.dec_hi)
+        lo = np.array(wavelet.dec_lo)
+        hi = np.array(wavelet.dec_hi)
 
-        self.in_channels = in_channels
-
-        self.conv_low_pass = nn.Conv1d(
-            in_channels=in_channels,
-            out_channels=in_channels * 5,
-            kernel_size=len(filter_decomposition_low_pass),
-            padding="same",
-            bias=False
-        )
-
-        self.conv_high_pass = nn.Conv1d(
-            in_channels=in_channels,
-            out_channels=in_channels * 5,
-            kernel_size=len(filter_decomposition_high_pass),
-            padding="same",
-            bias=False
-        )
+        self.conv_low = nn.Conv1d(in_channels, in_channels * 5, len(lo), padding=3, bias=False)
+        self.conv_high = nn.Conv1d(in_channels, in_channels * 5, len(hi), padding=3, bias=False)
 
         with torch.no_grad():
-
-            self.conv_low_pass.weight.zero_()
-
-            for ch in range(in_channels):
-                for band in range(5):
-
-                    out_idx = ch * 5 + band
-
-                    self.conv_low_pass.weight[
-                        out_idx,
-                        ch,
-                        :
-                    ] = torch.tensor(filter_decomposition_low_pass)
-
-            self.conv_high_pass.weight.zero_()
+            self.conv_low.weight.zero_()
+            self.conv_high.weight.zero_()
 
             for ch in range(in_channels):
-                for band in range(5):
-
-                    out_idx = ch * 5 + band
-
-                    self.conv_high_pass.weight[
-                        out_idx,
-                        ch,
-                        :
-                    ] = torch.tensor(filter_decomposition_high_pass)
+                for b in range(5):
+                    out = ch * 5 + b
+                    self.conv_low.weight[out, ch, :] = torch.tensor(lo)
+                    self.conv_high.weight[out, ch, :] = torch.tensor(hi)
 
     def forward(self, x):
-        low_pass = self.conv_low_pass(x)
-        high_pass = self.conv_high_pass(x)
-
-        return low_pass + high_pass
-    
-class WaveletCNN(nn.Module):
-    def __init__(self, input_size, output_size=128):
-        super().__init__()
-
-        self.wavelet = WaveletConv1D(
-            in_channels=input_size,
-            out_channels=output_size
-        )
-
-    def forward(self, x):
-        x = self.wavelet(x)
-        return x
+        return self.conv_low(x) + self.conv_high(x)
 
 class GuidedCNN(nn.Module):
-
     def __init__(self, guided, input_size, output_size=4):
         super().__init__()
 
-        self.features = nn.Sequential(
+        self.first_layer = nn.Sequential(
             guided,
             nn.BatchNorm1d(input_size * 5),
             nn.ReLU()
         )
 
-        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.backbone = nn.Sequential(
+            nn.Conv1d(input_size * 5, 64, 1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+
+            nn.Conv1d(64, 128, 3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+
+            nn.Conv1d(128, 128, 3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+
+            nn.AdaptiveAvgPool1d(1)
+        )
 
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(input_size * 5, 128),
+            nn.Linear(128, 128),
             nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(128, output_size)
         )
 
     def forward(self, x):
+        x = self.first_layer(x)
+        x = self.backbone(x)
+        return self.classifier(x)
 
-        x = x.permute(0, 2, 1)
-
-        features = self.features(x)
-
-        pooled = self.pool(features)
-
-        return self.classifier(pooled)
- 
 class StandardCNN(nn.Module):
-
     def __init__(self, input_size, output_size=4):
         super().__init__()
 
-        self.features = nn.Sequential(
-            nn.Conv1d(
-                input_size,
-                input_size * 5,
-                kernel_size=7,
-                padding="same"
-            ),
+        self.first_layer = nn.Sequential(
+            nn.Conv1d(input_size, input_size * 5, 7, padding=3),
             nn.BatchNorm1d(input_size * 5),
             nn.ReLU()
         )
 
-        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.backbone = nn.Sequential(
+            nn.Conv1d(input_size * 5, 64, 1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+
+            nn.Conv1d(64, 128, 3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+
+            nn.Conv1d(128, 128, 3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+
+            nn.AdaptiveAvgPool1d(1)
+        )
 
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(input_size * 5, 128),
+            nn.Linear(128, 128),
             nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(128, output_size)
         )
 
     def forward(self, x):
+        x = self.first_layer(x)
+        x = self.backbone(x)
+        return self.classifier(x)
 
-        x = x.permute(0, 2, 1)
+def rsa(m1, m2):
+    m1 = np.asarray(m1)
+    m2 = np.asarray(m2)
 
-        features = self.features(x)
+    if m1.shape[0] != m2.shape[0]:
+        raise ValueError("Rows must match")
 
-        pooled = self.pool(features)
+    r1 = pdist(m1, metric='correlation')
+    r2 = pdist(m2, metric='correlation')
 
-        return self.classifier(pooled)
+    corr, p = spearmanr(r1, r2)
 
-def rsa(matrix1, matrix2, distance_metric='correlation'):
-    
-    matrix1 = np.asarray(matrix1)
-    matrix2 = np.asarray(matrix2)
+    return corr, p, squareform(r1), squareform(r2)
 
-    if matrix1.shape[0] != matrix2.shape[0]:
-        raise ValueError(
-            "Both matrices must have the same number of conditions (rows)."
-        )
+def extract_activations(model, X, device="cpu"):
+    model = model.to(device)
+    model.eval()
 
-    rdm_vec1 = pdist(matrix1, metric=distance_metric)
-    rdm_vec2 = pdist(matrix2, metric=distance_metric)
+    loader = DataLoader(TensorDataset(X), batch_size=32)
 
-    rsa_corr, p_value = spearmanr(rdm_vec1, rdm_vec2)
-
-    rdm1 = squareform(rdm_vec1)
-    rdm2 = squareform(rdm_vec2)
-
-    return rsa_corr, p_value, rdm1, rdm2
-
-if __name__ == "__main__":
-    context_train = retrieve_context(parent_folder="Final_project_data", subdirectory="Intra", type_of_data="train")
-    X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
-
-    feature_technique = "wavelets"
-    window = X_tensor_train[0].numpy()
-    window = window.T
-    wavelet_full = pre_process(
-        context_train.persons[0].scans[0].matrix,
-        sfreq=2034,
-        feature_extraction="wavelets"
-    )
-    sequence_length = 256
-
-    wavelet_windows = []
-
-    # both CNN use batches of 256 time points as input, so we need to create the same windows from the wavelet transform to compare them in the RSA analysis.
-    # # so from the full wavelet transform we create the same windows as the CNNs to compare them in the RSA analysis. 
-    # We create 12 windows of 256 time points each, which corresponds to the same windowing technique used in the CNNs.
-    for i in range(12):
-
-        start = i * sequence_length
-        end = start + sequence_length
-
-        wavelet_window = wavelet_full[:, :, start:end]
-
-        wavelet_windows.append(wavelet_window)
-
-    wavelet_features = np.stack(wavelet_windows)
-        
-    guided_cnn_model = GuidedCNN(guided=WaveletConv1D(X_tensor_train.shape[2]),input_size=X_tensor_train.shape[2], output_size=len(set(context_train.labels.values())))
-    train_model(guided_cnn_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), torch.optim.Adam(guided_cnn_model.parameters(), lr=0.001), num_epochs=20)
-    
-    context_test = retrieve_context(parent_folder="Final_project_data", subdirectory="Intra", type_of_data="test")
-    
-    X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
-
-    test_model(guided_cnn_model, X_tensor_test, y_tensor_test, nn.CrossEntropyLoss())
-
-    cnn_model = StandardCNN(input_size=X_tensor_train.shape[2], output_size=len(set(context_train.labels.values())))
-    train_model(cnn_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), torch.optim.Adam(cnn_model.parameters(), lr=0.001), num_epochs=20)
-    
-    test_model(cnn_model, X_tensor_test, y_tensor_test, nn.CrossEntropyLoss())
+    acts = {"features": [], "pool": [], "hidden": [], "logits": []}
 
     with torch.no_grad():
+        for (xb,) in loader:
+            xb = xb.to(device)
 
-        print("Evaluating Guided CNN layer:")
-        print(guided_cnn_model.features)
+            f = model.first_layer(xb)
+            acts["features"].append(f.mean(-1).cpu())
 
-        print("Evaluating CNN layer:")
-        print(cnn_model.features)
+            p = model.backbone(f)
+            acts["pool"].append(p.mean(-1).cpu())
 
-        x = X_tensor_train.permute(0, 2, 1)
+            h = model.classifier[0:3](p)
+            acts["hidden"].append(h.cpu())
 
-        guided_features = guided_cnn_model.features(x)
+            l = model.classifier[3:](h)
+            acts["logits"].append(l.cpu())
 
-        cnn_features = cnn_model.features(x)
+    return {k: torch.cat(v, 0) for k, v in acts.items()}
 
-        batch_size = guided_features.shape[0]
+def Wavelet_RSA_similarity(model,
+                           wavelet_features,
+                           X_data,
+                           model_name="Model",
+                           device="cpu",
+                           labels=None):
 
-        guided_features = guided_features.view(
-            batch_size,
-            248,
-            5,
-            256
-        )
+    n = min(len(wavelet_features), len(X_data))
+    wavelet_features = wavelet_features[:n]
+    X_data = X_data[:n]
 
-        cnn_features = cnn_features.view(
-            batch_size,
-            248,
-            5,
-            256
-        )
+    wavelet_ref = wavelet_features.reshape(n, -1)
+    wavelet_ref = normalize(wavelet_ref)
 
-        wavelet_rsa = wavelet_features.reshape(12, -1)
+    X_t = torch.tensor(X_data, dtype=torch.float32)
 
-        guided_rsa = guided_features.reshape(12, -1).cpu().numpy()
+    acts = extract_activations(model, X_t, device)
 
-        cnn_rsa = cnn_features.reshape(12, -1).cpu().numpy()
+    layer_order = ["features", "pool", "hidden", "logits"]
 
-        rsa_corr, p_value, _, _ = rsa(
-            guided_rsa,
-            cnn_rsa
-        )
+    scores = {}
 
-        rsa_corr_guided, p_value, _, _ = rsa(wavelet_rsa, guided_rsa)
-        rsa_corr_cnn, p_value, _, _ = rsa(wavelet_rsa, cnn_rsa)
+    for layer in layer_order:
+        A = acts[layer].numpy()
+        A = normalize(A)
+        scores[layer], _, _, _ = rsa(wavelet_ref, A)
 
-        print(
-            f"RSA Correlation guided vs normal CNN: {rsa_corr:.4f}, "
-            f"p-value guided vs normal CNN: {p_value:.4e}"
-        )
+    fig, ax = plt.subplots(figsize=(9, 5))
 
-        print(
-            f"RSA Correlation guided vs ground truth: {rsa_corr_guided:.4f}, "
-            f"p-value guided vs ground truth: {p_value:.4e}"
-        )
+    values = [scores[l] for l in layer_order]
+    colors = ["#3776AB", "#9B6DD8", "#E8924A", "#3DB37C"]
 
-        print(
-            f"RSA Correlation normal CNN vs ground truth: {rsa_corr_cnn:.4f}, "
-            f"p-value normal CNN vs ground truth: {p_value:.4e}"
-        )
+    bars = ax.bar(labels if labels else layer_order, values, color=colors)
+
+    ax.set_ylim(0, 1)
+    ax.set_title(f"{model_name}: RSA similarity to Wavelets per layer")
+    ax.set_ylabel("RSA correlation")
+    ax.grid(axis="y", alpha=0.3)
+
+    for b, v in zip(bars, values):
+        ax.text(b.get_x() + b.get_width()/2, v + 0.03, f"{v:.3f}", ha="center")
+
+    plt.tight_layout()
+    plt.savefig(f"{model_name}_rsa.png", dpi=120)
+    plt.close()
+
+    return scores
+
+def build_wavelets(scans, target_len=256):
+
+    features = []
+
+    for scan in scans:
+        w = pre_process(scan.matrix, downsample_factor=100)
+        w = np.asarray(w)
+
+        C = w.shape[0]
+        out = np.zeros((C, target_len))
+
+        old = np.linspace(0, 1, w.shape[1])
+        new = np.linspace(0, 1, target_len)
+
+        for c in range(C):
+            out[c] = np.interp(new, old, w[c])
+
+        out = normalize(out)
+        features.append(out)
+
+    return np.stack(features)
+
+if __name__ == "__main__":
+
+    ctx_train = retrieve_context("Final_project_data", "Intra", "train")
+    ctx_test = retrieve_context("Final_project_data", "Intra", "test")
+
+    X_train, y_train = convert_data(down_sample, min_max_scaling, create_sequences, ctx_train)
+    X_test, y_test = convert_data(down_sample, min_max_scaling, create_sequences, ctx_test)
+
+    X_train = X_train.permute(0, 2, 1)
+    X_test = X_test.permute(0, 2, 1)
+
+    guided = GuidedCNN(
+        WaveletConv1D(X_train.shape[1]),
+        input_size=X_train.shape[1],
+        output_size=len(set(ctx_train.labels.values()))
+    )
+
+    cnn = StandardCNN(
+        input_size=X_train.shape[1],
+        output_size=len(set(ctx_train.labels.values()))
+    )
+
+    train_model(guided, X_train, y_train,
+                nn.CrossEntropyLoss(),
+                torch.optim.Adam(guided.parameters(), lr=0.001),
+                num_epochs=20)
+
+    train_model(cnn, X_train, y_train,
+                nn.CrossEntropyLoss(),
+                torch.optim.Adam(cnn.parameters(), lr=0.001),
+                num_epochs=20)
+
+    test_model(guided, X_test, y_test, nn.CrossEntropyLoss())
+    test_model(cnn, X_test, y_test, nn.CrossEntropyLoss())
+
+    train_scans = [s for p in ctx_train.persons for s in p.get_scans()]
+    test_scans = [s for p in ctx_test.persons for s in p.get_scans()]
+
+    wave_test = build_wavelets(test_scans)
+
+    guided_scores = Wavelet_RSA_similarity(
+        guided, wave_test, X_test.numpy(),
+        "Guided CNN",
+        labels=["Conv1d k = 7 + BN + ReLU", "AdaptiveAvgPool", "linear + ReLU (128 hidden)", "Linear (logits)"]
+    )
+
+    cnn_scores = Wavelet_RSA_similarity(
+        cnn, wave_test, X_test.numpy(),
+        "Standard CNN",
+        labels=["Conv1d k = 7 + BN + ReLU", "AdaptiveAvgPool", "linear + ReLU (128 hidden)", "Linear (logits)"]
+    )
+
+    print("\nGUIDED:", guided_scores)
+    print("\nSTANDARD:", cnn_scores)

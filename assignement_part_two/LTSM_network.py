@@ -111,9 +111,6 @@ def test_model(model: LongShortTermMemoryNetwork, test_x, test_y, loss_function,
 
     accuracy = correct / total
 
-    print(f"Test Loss: {avg_loss:.4f}")
-    print(f"Test Accuracy: {accuracy:.4f}")
-
     with torch.no_grad():
 
         outputs = model(test_x)

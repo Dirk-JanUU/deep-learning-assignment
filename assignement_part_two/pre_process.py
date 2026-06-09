@@ -241,8 +241,8 @@ def pre_process(scan, sfreq=2034, feature_extraction=False, downsample_factor=1,
         delta = np.arange(1, 4, 1)          # 1-3 Hz
         theta = np.arange(4, 8, 1)          # 4-7 Hz
         alpha = np.arange(8, 12, 2)         # 8-11 Hz (step 2 Hz)
-        beta = np.arange(12, 30, 4)         # 12-28 Hz (step 4 Hz)
-        gamma = np.arange(30, 101, 10)       # 30-100 Hz (step 10 Hz)
+        beta = np.arange(12, 30, 6)         # 12-28 Hz (step 4 Hz)
+        gamma = np.arange(30, 101, 30)       # 30-100 Hz (step 10 Hz)
         frequencies = np.concatenate([delta, theta, alpha, beta, gamma])
         epochs = mne.EpochsArray(zero_meaned.get_data()[np.newaxis, ...], zero_meaned.info, verbose=False)
         
@@ -251,7 +251,7 @@ def pre_process(scan, sfreq=2034, feature_extraction=False, downsample_factor=1,
         # Use logarithmic spacing so cycles decrease faster across frequency.
         n_cycles = np.logspace(np.log10(8.0), np.log10(3.0), len(frequencies))
         tfr = mne.time_frequency.tfr_morlet(
-            epochs, freqs=frequencies, n_cycles=n_cycles,
+            epochs, freqs=frequencies, n_cycles=frequencies / 2,
             return_itc=False, average=True, verbose=False
         )
         
