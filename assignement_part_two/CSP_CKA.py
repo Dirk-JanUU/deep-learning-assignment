@@ -461,16 +461,16 @@ if __name__ == "__main__":
     parser.add_argument("--CKA", type=bool, default=False, help="Run CKA analysis and plotting (takes a while)")
     args = parser.parse_args()
     
-    EPOCHS     = 30
+    EPOCHS     = 20
     BATCH_SIZE = 1
     DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {DEVICE}\n")
 
-    train_persons = load_data_from_h5_files(subdirectory="Intra", type_of_data="train")
-    test_persons  = load_data_from_h5_files(subdirectory="Intra", type_of_data="test")
+    #train_persons = load_data_from_h5_files(subdirectory="Intra", type_of_data="train")
+    #test_persons  = load_data_from_h5_files(subdirectory="Intra", type_of_data="test")
 
-    #train_persons = load_data_from_h5_files(subdirectory="Cross", type_of_data="train")
-    #test_persons  = load_data_from_h5_files(subdirectory="Cross", type_of_data="test1")
+    train_persons = load_data_from_h5_files(subdirectory="Cross", type_of_data="train")
+    test_persons  = load_data_from_h5_files(subdirectory="Cross", type_of_data="test1")
     #test_persons  = load_data_from_h5_files(subdirectory="Cross", type_of_data="test2")
     #test_persons  = load_data_from_h5_files(subdirectory="Cross", type_of_data="test3")
 
@@ -486,8 +486,8 @@ if __name__ == "__main__":
     #X_train, y_train = np.array(normalization([downsample(scan.matrix, factor = 20) for scan in train_scans])), np.array([scan.task for scan in train_scans])
     #X_test,  y_test  = np.array(normalization([downsample(scan.matrix, factor = 20) for scan in test_scans])), np.array([scan.task for scan in test_scans])
 
-    X_train, y_train = np.array(min_max_scale(down_sample([scan.matrix for scan in train_scans], factor=50))), np.array([scan.task for scan in train_scans])
-    X_test,  y_test  = np.array(min_max_scale(down_sample([scan.matrix for scan in test_scans], factor=50))), np.array([scan.task for scan in test_scans])
+    X_train, y_train = np.array(min_max_scale(down_sample([scan.matrix for scan in train_scans], factor=20))), np.array([scan.task for scan in train_scans])
+    X_test,  y_test  = np.array(min_max_scale(down_sample([scan.matrix for scan in test_scans], factor=20))), np.array([scan.task for scan in test_scans])
 
     N_CHANNELS = X_train[0].shape[0]
     N_CLASSES  = len(set(y_train))
@@ -522,35 +522,3 @@ if __name__ == "__main__":
                                    EPOCHS, BATCH_SIZE, device=DEVICE)
     acc_csp_guided = evaluate_model(csp_guided, X_test, y_test, le_g, DEVICE)
     print(f"CSP-guided CNN test accuracy: {acc_csp_guided:.4f}")
-
-
-    # ── CKA similarity per layer  (2 plots) ──────────────────────────────
-    if args.CKA == True:
-        # With custom labels if you want cleaner x-axis names
-        std_labels = {
-            "features.0": "Conv1d k=7",
-            "features.1": "BatchNorm",
-            "features.2": "ReLU",
-            "pool":       "AvgPool",
-            "classifier.1": "Linear(128)",
-            "classifier.3": "Linear(logits)",
-        }
-        scores_std = CSP_CKA_similarity(std_model, csp_filters, X_test,
-                                        model_name="StandardCNN", device=DEVICE)
-
-        # Without custom labels (uses layer names like "lstm", "norm", "classifier.0", etc.)
-        scores_g = CSP_CKA_similarity(csp_guided, csp_filters, X_test,
-                                        model_name="CSP-guided CNN", device=DEVICE)
-
-        # ── Summary ──────────────────────────────────────────────────────────
-        print("\n" + "=" * 60); print("SUMMARY"); print("=" * 60)
-        print("Test accuracy:")
-        print(f"  StandardCNN     : {acc_std:.4f}")
-        print(f"  CSP + CNN       : {acc_csp_cnn:.4f}")
-        print(f"  CSP-guided CNN  : {acc_csp_guided:.4f}")
-        print("\nLayer-wise CKA  (CSP-guided CNN):")
-        for k, v in scores_g.items():
-            print(f"  {k:>8s} : {v:.4f}")
-        print("\nLayer-wise CKA  (StandardCNN):")
-        for k, v in scores_std.items():
-            print(f"  {k:>8s} : {v:.4f}")

@@ -57,8 +57,9 @@ def train(classification_type, feature_extraction = False, downsample_factor = 2
 
     model = build_model(input_shape=input_shape, head_size=head_size, num_heads=num_heads, ff_dim=ff_layers, num_layers=num_transformer_layers, num_classes=number_of_classes)
     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    model.fit(x_data, y_data, epochs=10, batch_size = 1 )
-    return model
+    history = model.fit(x_data, y_data, epochs=10, batch_size = 1 )
+    losses = history.history.get('loss', [])
+    return model, np.array(losses)
 
 def test(model, classification_type, downsample_factor=10):
     if classification_type == "Intra":

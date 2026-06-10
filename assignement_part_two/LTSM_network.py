@@ -39,7 +39,7 @@ class LongShortTermMemoryNetwork(nn.Module):
         return logits
 
 
-def train_model(model: LongShortTermMemoryNetwork, train_x, train_y, loss_function, optimizer: torch.optim.Optimizer, num_epochs: int, batch_size: int = 32):
+def train_model(model: LongShortTermMemoryNetwork, train_x, train_y, loss_function, optimizer: torch.optim.Optimizer, num_epochs: int, batch_size: int = 10):
     dataset = torch.utils.data.TensorDataset(train_x, train_y)
 
     dataloader = torch.utils.data.DataLoader(
@@ -47,6 +47,8 @@ def train_model(model: LongShortTermMemoryNetwork, train_x, train_y, loss_functi
         batch_size=batch_size,
         shuffle=True
     )
+
+    losses = []
 
     for epoch in range(num_epochs):
 
@@ -70,12 +72,16 @@ def train_model(model: LongShortTermMemoryNetwork, train_x, train_y, loss_functi
 
         avg_loss = total_loss / len(dataloader)
 
+        losses.append(avg_loss)
+
         print(
             f"Epoch [{epoch+1}/{num_epochs}] "
             f"Loss: {avg_loss:.4f}"
         )
+    return losses
+    
 
-def test_model(model: LongShortTermMemoryNetwork, test_x, test_y, loss_function,batch_size: int = 32):
+def test_model(model: LongShortTermMemoryNetwork, test_x, test_y, loss_function,batch_size: int = 10):
 
     dataset = torch.utils.data.TensorDataset(test_x, test_y)
 
