@@ -12,6 +12,8 @@ from CNN_network import ConvolutionalNeuralNetwork
 from matplotlib import pyplot as plt
 import time
 
+SFREQ = 2034
+
 class CSP_CNN1(nn.Module):
     def __init__(self, electrodes, n_classes, n_csp_components, csp_filters, dropout=0.3):
         super().__init__()
@@ -98,7 +100,7 @@ class CSP_CNN2(nn.Module):
         return self.classifier(x)
     
     
-def run_and_plot(model = "all", N_CSP = 4, task_type = "intra"):
+def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_factor = 20):
     # This function runs experiments, plot epoch loss, training time, and test accuracy (3 plots)
     if model not in ["all", "standard", "csp1", "csp2"]:
         raise ValueError("model must be one of 'all', 'standard', 'csp1', 'csp2'")
