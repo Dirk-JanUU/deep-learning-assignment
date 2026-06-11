@@ -41,6 +41,7 @@ for factor in down_sample_factors:
     X_test_t = X_test_t.permute(0, 2, 1)
 
     std_model = ConvolutionalNeuralNetwork(input_size=X_train_t.shape[1], output_size=n_classes)
+    train_model(std_model, X_train_t, y_train_t, nn.CrossEntropyLoss(),optim.Adam(std_model.parameters(), lr=0.001), num_epochs=20)
     std_model.eval()
     with torch.no_grad():
         preds = std_model(X_test_t).argmax(1).numpy()
