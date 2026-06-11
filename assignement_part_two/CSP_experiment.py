@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 import time
 
 N_BANDS = 5
-DOWNSAMPLE_FACTOR = 20
+DOWNSAMPLE_FACTOR = 60
 SFREQ = 2034 / DOWNSAMPLE_FACTOR
 
 class CSP_CNN1(nn.Module):
@@ -104,7 +104,7 @@ class CSP_CNN2(nn.Module):
         return self.classifier(x)
     
     
-def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_factor = 20):
+def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_factor = DOWNSAMPLE_FACTOR):
     # This function runs experiments, plot epoch loss, training time, and test accuracy (3 plots)
     if model not in ["all", "standard", "csp1", "csp2", "transformer", "lstm", "wave", "wave2"]:
         raise ValueError("model must be one of 'all', 'standard', 'csp1', 'csp2', 'transformer', 'lstm', 'wave', 'wave2'")
@@ -113,14 +113,14 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
 
     if task_type == "intra":
         context_train = retrieve_context(parent_folder="Final_project_data", subdirectory="Intra", type_of_data="train")
-        X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
+        X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train, down_fact=downsample_factor)
         X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (trials, electrodes, timepoints)
         print(f"Training data shape after permute: {X_tensor_train.shape}")
         print(f"Training labels shape: {y_tensor_train.shape}")
         print(f"Training labels: {list(context_train.labels.values())}")
 
         context_test = retrieve_context(parent_folder="Final_project_data", subdirectory="Intra", type_of_data="test")
-        X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
+        X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test, down_fact=downsample_factor)
         X_tensor_test = X_tensor_test.permute(0, 2, 1)  # (trials, electrodes, timepoints)
         #print(f"Test data shape after permute: {X_tensor_test.shape}")
         #print(f"Test labels shape: {y_tensor_test.shape}")
@@ -206,7 +206,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.suptitle(task_type)
             
             plt.subplot(1, 3, 1)
-            plt.plot(std_losses, label="Standard CNN")
+            plt.plot(std_losses, label="CNN")
             plt.plot(csp1_losses, label="CSP-CNN1")
             plt.plot(csp2_losses, label="CSP-CNN2")
             plt.plot(lstm_losses, label="LSTM")
@@ -217,13 +217,13 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.legend()
             
             plt.subplot(1, 3, 2)
-            plt.bar(["Standard CNN", "CSP-CNN1", "CSP-CNN2", "LSTM", "Transformer"], [std_acc, csp1_acc, csp2_acc, lstm_acc, transformer_accuracy])
+            plt.bar(["CNN", "CSP-CNN1", "CSP-CNN2", "LSTM", "Transformer"], [std_acc, csp1_acc, csp2_acc, lstm_acc, transformer_accuracy])
             plt.ylim(0, 1)
             plt.title("Test Accuracy")
             plt.ylabel("Accuracy")
             
             plt.subplot(1, 3, 3)
-            plt.bar(["Standard CNN", "CSP-CNN1", "CSP-CNN2", "LSTM", "Transformer"], [std_training_time, csp1_training_time, csp2_training_time, lstm_training_time, transformer_training_time])
+            plt.bar(["CNN", "CSP-CNN1", "CSP-CNN2", "LSTM", "Transformer"], [std_training_time, csp1_training_time, csp2_training_time, lstm_training_time, transformer_training_time])
             plt.title("Training Time")
             plt.ylabel("Time (s)")
             
@@ -252,14 +252,14 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.ylabel("Loss")
         
             plt.subplot(1, 3, 2)
-            plt.bar(["Standard CNN"], [acc])
+            plt.bar(["CNN"], [acc])
             plt.ylim(0, 1)
             plt.title("Standard CNN Test Accuracy")
             plt.ylabel("Accuracy")
         
             plt.subplot(1, 3, 3)
-            plt.bar(["Standard CNN"], [training_time])
-            plt.title("Standard CNN Training Time")
+            plt.bar(["CNN"], [training_time])
+            plt.title("CNN Training Time")
             plt.ylabel("Time (s)")
             plt.tight_layout()
             plt.show()
@@ -459,7 +459,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
          
         tests = ["test1", "test2", "test3"]
         context_train = retrieve_context(parent_folder="Final_project_data", subdirectory="Cross", type_of_data="train")
-        X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
+        X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train, down_fact=downsample_factor)
         X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (trials, electrodes, timepoints)
         print(f"Training data shape after permute: {X_tensor_train.shape}")
         print(f"Training labels shape: {y_tensor_train.shape}")
@@ -467,12 +467,20 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
 
         n_classes = len(set(context_train.labels.values()))
 
+        # CSP(n_trials, n_channels, n_timepoints) 
+        csp = CSP(n_components=N_CSP, reg=None, log=False, norm_trace=False)
+        csp.fit(X_tensor_train, y_tensor_train)
+        # csp.filters_ shape: (n_channels, n_channels); take first N_CSP rows
+        filters = csp.filters_[:N_CSP]  # (n_csp, n_channels)
+        #X_train_csp = np.array([filters @ trial for trial in X_train])  # (trials, n_csp, timepoints)
+        #X_test_csp = np.array([filters @ trial for trial in X_test])    # (trials, n_csp, timepoints)
+
         X_tensor_tests = []
         Y_tensor_tests = []
 
         for test in tests:
             context_test = retrieve_context(parent_folder="Final_project_data", subdirectory="Cross", type_of_data=test)
-            X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
+            X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test, down_fact=downsample_factor)
             X_tensor_test = X_tensor_test.permute(0, 2, 1)  # (trials, electrodes, timepoints)
             X_tensor_tests.append(X_tensor_test)
             Y_tensor_tests.append(y_tensor_test)
@@ -493,20 +501,6 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
                     std_acc = (std_preds == y_test.numpy()).mean()
                     std_test_accuracies.append(std_acc)
 
-            # TRANSFORMER
-            transformer_model = build_model(input_shape=(X_tensor_train.shape[1], X_tensor_train.shape[2]), head_size=64, num_heads=2, ff_dim=128, num_layers=2, num_classes=4)
-            time_0 = time.time()
-            transformer_model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-            history = transformer_model.fit(X_tensor_train, y_tensor_train, epochs=20, batch_size = 1 )
-            transformer_training_time = time.time() - time_0
-            transformer_losses = history.history.get('loss', [])
-            transformer_test_accuracies = []
-
-            with torch.no_grad():
-                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
-                    transformer_acc = transformer_model.evaluate(X_test, y_test)[1]
-                    transformer_test_accuracies.append(transformer_acc)
-
             # LSTM
             X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (batch_size, sequence_length, electrodes)
             X_tensor_tests = [x.permute(0, 2, 1) for x in X_tensor_tests]
@@ -516,25 +510,87 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             lstm_training_time = time.time() - time_0
             lstm_model.eval()
             lstm_test_accuracies = []
-
+            
             with torch.no_grad():
                 for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
                     lstm_preds = lstm_model(X_test).argmax(1).numpy()
                     lstm_acc = (lstm_preds == y_test.numpy()).mean()
                     lstm_test_accuracies.append(lstm_acc)
 
+            # CSP-CNN1
+            X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (batch_size, electrodes, sequence_length)
+            csp_cnn1_filters = filters[:N_CSP]
+            csp1_model = CSP_CNN1(X_tensor_train.shape[1], n_classes, N_CSP, csp_cnn1_filters)
+            time_0 = time.time()
+            csp1_losses = train_model(csp1_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(csp1_model.parameters(), lr=0.001), num_epochs=20)
+            csp1_training_time = time.time() - time_0
+            csp1_model.eval()
+            csp1_test_accuracies = []
+            X_tensor_tests = [x.permute(0, 2, 1) for x in X_tensor_tests]
+            with torch.no_grad(): 
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    csp1_preds = csp1_model(X_test).argmax(1).numpy()
+                    csp1_acc = (csp1_preds == y_test.numpy()).mean()
+                    csp1_test_accuracies.append(csp1_acc)
+
+            # CSP-CNN2
+            csp_2_filters = filters[:N_CSP]
+            csp2_model = CSP_CNN2(X_tensor_train.shape[1], n_classes, N_CSP, csp_2_filters)
+            csp2_time_0 = time.time()
+            csp2_losses = train_model(csp2_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(csp2_model.parameters(), lr=0.001), num_epochs=20)
+            csp2_training_time = time.time() - csp2_time_0
+            print(f"\nCSP as middle layer Training time: {csp2_training_time:.2f} seconds")
+            csp2_model.eval()
+            csp2_test_accuracies = []
+            
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    csp2_preds = csp2_model(X_test).argmax(1).numpy()
+                    csp2_acc = (csp2_preds == y_test.numpy()).mean()
+                    csp2_test_accuracies.append(csp2_acc)
+
+            # Wavelet CNN1
+            w1 = Wavelet_CNN1(X_tensor_train.shape[1], SFREQ, n_classes)
+            time_0 = time.time()
+            w1_losses = train_model(w1, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(w1.parameters(), lr=0.001), num_epochs=20)
+            w1_training_time = time.time() - time_0
+            w1.eval()
+            w1_test_accuracies = []
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    w1_preds = w1(X_test).argmax(1).numpy()
+                    w1_acc = (w1_preds == y_test.numpy()).mean()
+                    w1_test_accuracies.append(w1_acc)
+
+            # Wavelet CNN2
+            w2 = Wavelet_CNN2(X_tensor_train.shape[1], SFREQ, n_classes)
+            time_0 = time.time()
+            w2_losses = train_model(w2, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(w2.parameters(), lr=0.001), num_epochs=20)
+            w2_training_time = time.time() - time_0
+            w2.eval()
+            w2_test_accuracies = []
+
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    w2_preds = w2(X_test).argmax(1).numpy()
+                    w2_acc = (w2_preds == y_test.numpy()).mean()
+                    w2_test_accuracies.append(w2_acc)
+
             plt.figure(figsize=(15, 4))
             plt.suptitle(task_type)
             plt.subplot(1, 3, 1)
-            plt.plot(std_losses, label="Standard CNN")
-            plt.plot(transformer_losses, label="Transformer")
+            plt.plot(std_losses, label="CNN")
             plt.plot(lstm_losses, label="LSTM")
+            plt.plot(csp1_losses, label="CSP-1")
+            plt.plot(csp2_losses, label="CSP-2")
+            plt.plot(w1_losses, label="Wave-1")
+            plt.plot(w2_losses, label="Wavel-2")
             plt.title("Training Loss")
             plt.xlabel("Epoch")
             plt.ylabel("Loss")
             plt.legend()
             plt.subplot(1, 3, 2)
-            models = ["Standard CNN", "Transformer", "LSTM"]
+            models = ["CNN", "LSTM", "CSP-1", "CSP-2", "Wave-1", "Wavel-2"]
             x = np.arange(len(models))
             width = 0.25
 
@@ -545,8 +601,11 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
                     x + (i - (num_runs - 1) / 2) * width,
                     [
                         std_test_accuracies[i],
-                        transformer_test_accuracies[i],
                         lstm_test_accuracies[i],
+                        csp1_test_accuracies[i],
+                        csp2_test_accuracies[i],
+                        w1_test_accuracies[i],
+                        w2_test_accuracies[i]
                     ],
                     width,
                     label=f"Test {i+1}",
@@ -558,18 +617,107 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.title("Test Accuracy")
             plt.legend()
             plt.subplot(1, 3, 3)
-            plt.bar(["Standard CNN", "Transformer", "LSTM"], [std_training_time, transformer_training_time, lstm_training_time])
+            plt.bar(["CNN", "LSTM", "CSP-1", "CSP-2", "Wave-1", "Wavel-2"], [std_training_time, lstm_training_time, csp1_training_time, csp2_training_time, w1_training_time, w2_training_time])
             plt.title("Training Time")
             plt.ylabel("Time (s)")
             plt.tight_layout()
             plt.show()
 
+        if model == "csp1":
+            # CSP1
+            csp1_model = CSP_CNN1(X_tensor_train.shape[1], n_classes, N_CSP, filters)
+            csp1_time_0 = time.time()
+            csp1_losses = train_model(csp1_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(csp1_model.parameters(), lr=0.001), num_epochs=20)
+            csp1_training_time = time.time() - csp1_time_0
+            print(f"\nCSP as input layer Training time: {csp1_training_time:.2f} seconds")
+            csp1_model.eval()
+            csp1_test_accuracies = []
+            
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    csp1_preds = csp1_model(X_test).argmax(1).numpy()
+                    csp1_acc = (csp1_preds == y_test.numpy()).mean()
+                    csp1_test_accuracies.append(csp1_acc)
 
+            plt.figure(figsize=(15, 4))
+            plt.suptitle(task_type)
+            plt.subplot(1, 3, 1)
+            plt.plot(csp1_losses, label="CSP-CNN1")
+            plt.title("CSP-CNN1 Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.legend()
+            plt.subplot(1, 3, 2)
+            models = ["CSP-CNN1"]
+            x = np.arange(len(models))
+            width = 0.25
+            num_runs = len(csp1_test_accuracies)
+            for i in range(num_runs):
+                plt.bar(
+                    x + (i - (num_runs - 1) / 2) * width,
+                    [csp1_test_accuracies[i]],
+                    width,
+                    label=f"Test {i+1}",
+                )
+            plt.xticks(x, models)
+            plt.ylim(0, 1)
+            plt.ylabel("Accuracy")
+            plt.title("Test Accuracy")
+            plt.legend()
+            plt.subplot(1, 3, 3)
+            plt.bar(["CSP-CNN1"], [csp1_training_time])
+            plt.title("CSP-CNN1 Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
 
+        if model == "csp2":
+            # CSP2
+            csp2_model = CSP_CNN2(X_tensor_train.shape[1], n_classes, N_CSP, filters)
+            csp2_time_0 = time.time()
+            csp2_losses = train_model(csp2_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(csp2_model.parameters(), lr=0.001), num_epochs=20)
+            csp2_training_time = time.time() - csp2_time_0
+            print(f"\nCSP as middle layer Training time: {csp2_training_time:.2f} seconds")
+            csp2_model.eval()
+            csp2_test_accuracies = []
+            
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    csp2_preds = csp2_model(X_test).argmax(1).numpy()
+                    csp2_acc = (csp2_preds == y_test.numpy()).mean()
+                    csp2_test_accuracies.append(csp2_acc)
 
-
-
-
+            plt.figure(figsize=(15, 4))
+            plt.suptitle(task_type)
+            plt.subplot(1, 3, 1)
+            plt.plot(csp2_losses, label="CSP-CNN2")
+            plt.title("CSP-CNN2 Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.legend()
+            plt.subplot(1, 3, 2)
+            models = ["CSP-CNN2"]
+            x = np.arange(len(models))
+            width = 0.25
+            num_runs = len(csp2_test_accuracies)
+            for i in range(num_runs):
+                plt.bar(
+                    x + (i - (num_runs - 1) / 2) * width,
+                    [csp2_test_accuracies[i]],
+                    width,
+                    label=f"Test {i+1}",
+                )
+            plt.xticks(x, models)
+            plt.ylim(0, 1)
+            plt.ylabel("Accuracy")
+            plt.title("Test Accuracy")
+            plt.legend()
+            plt.subplot(1, 3, 3)
+            plt.bar(["CSP-CNN2"], [csp2_training_time])
+            plt.title("CSP-CNN2 Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
 
 if __name__ == "__main__":
     import argparse
@@ -577,4 +725,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="all", choices=["all", "standard", "csp1", "csp2", "transformer", "lstm", "wave", "wave2"], help="Which model to run")
     parser.add_argument("--task", type=str, default = "intra", choices=["intra", "contra"], help = "Which kind of neuroimaging task to learn")
     args = parser.parse_args()
-    run_and_plot(model=args.model, task_type=args.task)
+    run_and_plot(model="all", task_type="cross")
+
+
+
+# i was here :D
