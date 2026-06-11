@@ -4,15 +4,19 @@ import torch.nn as nn
 import torch.optim as optim
 from mne.decoding import CSP
 from sklearn.model_selection import train_test_split
+from Wavelet_experiment import Wavelet_CNN1, Wavelet_CNN2
 import read_data
-from LTSM_network import retrieve_context, convert_data, train_model, test_model, create_sequences, down_sample, min_max_scaling
+from LTSM_network import retrieve_context, convert_data, train_model, test_model, create_sequences, down_sample, min_max_scaling, LongShortTermMemoryNetwork
 from CNN_network import ConvolutionalNeuralNetwork
+from transformer import build_model, transformer_block, train, test
 #from transformer import train, test
 
 from matplotlib import pyplot as plt
 import time
 
-SFREQ = 2034
+N_BANDS = 5
+DOWNSAMPLE_FACTOR = 20
+SFREQ = 2034 / DOWNSAMPLE_FACTOR
 
 class CSP_CNN1(nn.Module):
     def __init__(self, electrodes, n_classes, n_csp_components, csp_filters, dropout=0.3):
@@ -102,8 +106,8 @@ class CSP_CNN2(nn.Module):
     
 def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_factor = 20):
     # This function runs experiments, plot epoch loss, training time, and test accuracy (3 plots)
-    if model not in ["all", "standard", "csp1", "csp2"]:
-        raise ValueError("model must be one of 'all', 'standard', 'csp1', 'csp2'")
+    if model not in ["all", "standard", "csp1", "csp2", "transformer", "lstm", "wave", "wave2"]:
+        raise ValueError("model must be one of 'all', 'standard', 'csp1', 'csp2', 'transformer', 'lstm', 'wave', 'wave2'")
     
     N_CSP = 4 # number of CSP components to keep; typically 4-8 is good for 2-class problems, more for multi-class
 
@@ -174,6 +178,29 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             csp2_acc = (csp2_preds == y_test_t.numpy()).mean()
             print(f"CSP-CNN2 - Training time: {csp2_training_time:.2f}s, Test accuracy: {csp2_acc:.4f}")
 
+            # Train LSTM
+            X_train_t_ltsm = X_train_t.permute(0, 2, 1)  # (batch_size, sequence_length, electrodes)
+            X_test_t_ltsm = X_test_t.permute(0, 2, 1)
+            lstm_model = LongShortTermMemoryNetwork(input_size=X_train_t_ltsm.shape[2], hidden_size=64, layers=2, output_size=n_classes)
+            time_0 = time.time()
+            lstm_losses = train_model(lstm_model, X_train_t_ltsm, y_train_t, nn.CrossEntropyLoss(), optim.Adam(lstm_model.parameters(), lr=0.001), num_epochs=20)
+            lstm_training_time = time.time() - time_0
+            lstm_model.eval()
+            with torch.no_grad():
+                lstm_preds = lstm_model(X_test_t_ltsm).argmax(1).numpy()
+            lstm_acc = (lstm_preds == y_test_t.numpy()).mean()
+
+            # Train transformer
+            X_train_t_transformer = X_train_t.permute(0, 2, 1)  # (batch_size, sequence_length, electrodes)
+            X_test_t_transformer = X_test_t.permute(0, 2, 1)
+            model = build_model(input_shape=(X_train_t_transformer.shape[1], X_train_t_transformer.shape[2]), head_size=64, num_heads=2, ff_dim=128, num_layers=2, num_classes=4)
+            time_0 = time.time()
+            model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            transformer_history = model.fit(X_train_t_transformer, y_train_t, epochs=10, batch_size = 1 )
+            transformer_training_time = time.time() - time_0
+            transformer_losses = transformer_history.history.get('loss', [])
+            transformer_accuracy = model.evaluate(X_test_t_transformer, y_test_t)[1]
+
             # Plot results
             plt.figure(figsize=(15, 4))
             plt.suptitle(task_type)
@@ -182,132 +209,275 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.plot(std_losses, label="Standard CNN")
             plt.plot(csp1_losses, label="CSP-CNN1")
             plt.plot(csp2_losses, label="CSP-CNN2")
+            plt.plot(lstm_losses, label="LSTM")
+            plt.plot(transformer_losses, label="Transformer")
             plt.title("Training Loss")
             plt.xlabel("Epoch")
             plt.ylabel("Loss")
             plt.legend()
             
             plt.subplot(1, 3, 2)
-            plt.bar(["Standard CNN", "CSP-CNN1", "CSP-CNN2"], [std_acc, csp1_acc, csp2_acc])
+            plt.bar(["Standard CNN", "CSP-CNN1", "CSP-CNN2", "LSTM", "Transformer"], [std_acc, csp1_acc, csp2_acc, lstm_acc, transformer_accuracy])
             plt.ylim(0, 1)
             plt.title("Test Accuracy")
             plt.ylabel("Accuracy")
             
             plt.subplot(1, 3, 3)
-            plt.bar(["Standard CNN", "CSP-CNN1", "CSP-CNN2"], [std_training_time, csp1_training_time, csp2_training_time])
+            plt.bar(["Standard CNN", "CSP-CNN1", "CSP-CNN2", "LSTM", "Transformer"], [std_training_time, csp1_training_time, csp2_training_time, lstm_training_time, transformer_training_time])
             plt.title("Training Time")
             plt.ylabel("Time (s)")
             
             plt.tight_layout()
             plt.show()
 
-    elif model == "standard":
-        std_model = ConvolutionalNeuralNetwork(input_size=X_train_t.shape[1], output_size=n_classes)
-        time_0 = time.time()
-        losses = train_model(std_model, X_train_t, y_train_t, nn.CrossEntropyLoss(), optim.Adam(std_model.parameters(), lr=0.001), num_epochs=20)
-        training_time = time.time() - time_0
-        print(f"\nStandard CNN Training time: {training_time:.2f} seconds")
-        std_model.eval()
-        with torch.no_grad():
-            preds = std_model(X_test_t).argmax(1).numpy()
-        acc = (preds == y_test_t.numpy()).mean()
-        print(f"\nStandard CNN Test accuracy: {acc:.4f}")
+        elif model == "standard":
+            std_model = ConvolutionalNeuralNetwork(input_size=X_train_t.shape[1], output_size=n_classes)
+            time_0 = time.time()
+            losses = train_model(std_model, X_train_t, y_train_t, nn.CrossEntropyLoss(), optim.Adam(std_model.parameters(), lr=0.001), num_epochs=20)
+            training_time = time.time() - time_0
+            print(f"\nStandard CNN Training time: {training_time:.2f} seconds")
+            std_model.eval()
+            with torch.no_grad():
+                preds = std_model(X_test_t).argmax(1).numpy()
+            acc = (preds == y_test_t.numpy()).mean()
+            print(f"\nStandard CNN Test accuracy: {acc:.4f}")
 
-        plt.figure(figsize=(12, 4))
-        plt.suptitle(task_type)
-        
-        plt.subplot(1, 3, 1)
-        plt.plot(losses)
-        plt.title("Standard CNN Training Loss")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")
-    
-        plt.subplot(1, 3, 2)
-        plt.bar(["Standard CNN"], [acc])
-        plt.ylim(0, 1)
-        plt.title("Standard CNN Test Accuracy")
-        plt.ylabel("Accuracy")
-    
-        plt.subplot(1, 3, 3)
-        plt.bar(["Standard CNN"], [training_time])
-        plt.title("Standard CNN Training Time")
-        plt.ylabel("Time (s)")
-        plt.tight_layout()
-        plt.show()
-
-    
-    elif model == "csp1":
-        csp1_model = CSP_CNN1(X_train_t.shape[1], n_classes, N_CSP, filters)
-        time_0 = time.time()
-        losses = train_model(csp1_model, X_train_t, y_train_t, nn.CrossEntropyLoss(), optim.Adam(csp1_model.parameters(), lr=0.001), num_epochs=20)
-        training_time = time.time() - time_0
-        print(f"\nCSP as input layer Training time: {training_time:.2f} seconds")
-        csp1_model.eval()
-        with torch.no_grad():
-            preds = csp1_model(X_test_t).argmax(1).numpy()
-        acc = (preds == y_test_t.numpy()).mean()
-        print(f"\nCSP as input layer Test accuracy: {acc:.4f}")
-
-        plt.figure(figsize=(12, 4))
-        plt.suptitle(task_type)
-
-        plt.subplot(1, 3, 1)
-        plt.plot(losses)
-        plt.title("CSP-CNN1 Training Loss")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")
-    
-        plt.subplot(1, 3, 2)
-        plt.bar(["CSP-CNN1"], [acc])
-        plt.ylim(0, 1)
-        plt.title("CSP-CNN1 Test Accuracy")
-        plt.ylabel("Accuracy")
-    
-        plt.subplot(1, 3, 3)
-        plt.bar(["CSP-CNN1"], [training_time])
-        plt.title("CSP-CNN1 Training Time")
-        plt.ylabel("Time (s)")
-        plt.tight_layout()
-        plt.show()
-
+            plt.figure(figsize=(12, 4))
+            plt.suptitle(task_type)
             
-    elif model == "csp2":
-        csp2_model = CSP_CNN2(X_train_t.shape[1], n_classes, N_CSP, filters)
-        train_model(csp2_model, X_train_t, y_train_t, nn.CrossEntropyLoss(),
-                    optim.Adam(csp2_model.parameters(), lr=0.001), num_epochs=20)
-        csp2_model.eval()
-        with torch.no_grad():
-            preds = csp2_model(X_test_t).argmax(1).numpy()
-        acc = (preds == y_test_t.numpy()).mean()
-        print(f"\nCSP as middle layer Test accuracy: {acc:.4f}")
-
-        plt.figure(figsize=(12, 4))
-        plt.suptitle(task_type)
-
-        plt.subplot(1, 3, 1)
-        plt.plot(losses)
-        plt.title("CSP-CNN2 Training Loss")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")      
-
-        plt.subplot(1, 3, 2)
-        plt.bar(["CSP-CNN2"], [acc])
-        plt.ylim(0, 1)
-        plt.title("CSP-CNN2 Test Accuracy")
-        plt.ylabel("Accuracy")
+            plt.subplot(1, 3, 1)
+            plt.plot(losses)
+            plt.title("Standard CNN Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
         
-        plt.subplot(1, 3, 3)
-        plt.bar(["CSP-CNN2"], [training_time])
-        plt.title("CSP-CNN2 Training Time")
-        plt.ylabel("Time (s)")
-        plt.tight_layout()
-        plt.show()
+            plt.subplot(1, 3, 2)
+            plt.bar(["Standard CNN"], [acc])
+            plt.ylim(0, 1)
+            plt.title("Standard CNN Test Accuracy")
+            plt.ylabel("Accuracy")
+        
+            plt.subplot(1, 3, 3)
+            plt.bar(["Standard CNN"], [training_time])
+            plt.title("Standard CNN Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
 
-       
+        
+        elif model == "csp1":
+            csp1_model = CSP_CNN1(X_train_t.shape[1], n_classes, N_CSP, filters)
+            time_0 = time.time()
+            losses = train_model(csp1_model, X_train_t, y_train_t, nn.CrossEntropyLoss(), optim.Adam(csp1_model.parameters(), lr=0.001), num_epochs=20)
+            training_time = time.time() - time_0
+            print(f"\nCSP as input layer Training time: {training_time:.2f} seconds")
+            csp1_model.eval()
+            with torch.no_grad():
+                preds = csp1_model(X_test_t).argmax(1).numpy()
+            acc = (preds == y_test_t.numpy()).mean()
+            print(f"\nCSP as input layer Test accuracy: {acc:.4f}")
+
+            plt.figure(figsize=(12, 4))
+            plt.suptitle(task_type)
+
+            plt.subplot(1, 3, 1)
+            plt.plot(losses)
+            plt.title("CSP-CNN1 Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+        
+            plt.subplot(1, 3, 2)
+            plt.bar(["CSP-CNN1"], [acc])
+            plt.ylim(0, 1)
+            plt.title("CSP-CNN1 Test Accuracy")
+            plt.ylabel("Accuracy")
+        
+            plt.subplot(1, 3, 3)
+            plt.bar(["CSP-CNN1"], [training_time])
+            plt.title("CSP-CNN1 Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
+
+                
+        elif model == "csp2":
+            csp2_model = CSP_CNN2(X_train_t.shape[1], n_classes, N_CSP, filters)
+            train_model(csp2_model, X_train_t, y_train_t, nn.CrossEntropyLoss(),
+                        optim.Adam(csp2_model.parameters(), lr=0.001), num_epochs=20)
+            csp2_model.eval()
+            with torch.no_grad():
+                preds = csp2_model(X_test_t).argmax(1).numpy()
+            acc = (preds == y_test_t.numpy()).mean()
+            print(f"\nCSP as middle layer Test accuracy: {acc:.4f}")
+
+            plt.figure(figsize=(12, 4))
+            plt.suptitle(task_type)
+
+            plt.subplot(1, 3, 1)
+            plt.plot(losses)
+            plt.title("CSP-CNN2 Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")      
+
+            plt.subplot(1, 3, 2)
+            plt.bar(["CSP-CNN2"], [acc])
+            plt.ylim(0, 1)
+            plt.title("CSP-CNN2 Test Accuracy")
+            plt.ylabel("Accuracy")
+            
+            plt.subplot(1, 3, 3)
+            plt.bar(["CSP-CNN2"], [training_time])
+            plt.title("CSP-CNN2 Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
+
+        # X_train_t:[384, 248, 256]
+        elif model == "transformer":
+            X_train_t = X_train_t.permute(0, 2, 1)  # (batch_size, sequence_length, electrodes)
+            X_test_t = X_test_t.permute(0, 2, 1)
+            model = build_model(input_shape=(X_train_t.shape[1], X_train_t.shape[2]), head_size=64, num_heads=2, ff_dim=128, num_layers=2, num_classes=4)
+            time_0 = time.time()
+            model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            history = model.fit(X_train_t, y_train_t, epochs=10, batch_size = 1 )
+            training_time = time.time() - time_0
+            losses = history.history.get('loss', [])
+            accuracy = model.evaluate(X_test_t, y_test_t)[1]
+            print(f"\nTransformer Test accuracy: {accuracy:.4f}")
+
+            plt.figure(figsize=(12, 4))
+            plt.suptitle(task_type)
+            plt.subplot(1, 3, 1)
+            plt.plot(losses)
+            plt.title("Transformer Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.subplot(1, 3, 2)
+            plt.bar(["Transformer"], [accuracy])
+            plt.ylim(0, 1)
+            plt.title("Transformer Test Accuracy")
+            plt.ylabel("Accuracy")
+            plt.subplot(1, 3, 3)
+            plt.bar(["Transformer"], [training_time])
+            plt.title("Transformer Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
+
+        # X_train_t:[384, 248, 256]
+        # model expects [batch_size, sequence_length, input_size]
+        elif model == "lstm":
+            X_train_t = X_train_t.permute(0, 2, 1)  # (batch_size, sequence_length, electrodes)
+            X_test_t = X_test_t.permute(0, 2, 1)
+            lstm_model = LongShortTermMemoryNetwork(input_size=X_train_t.shape[2], hidden_size=64, layers=2, output_size=n_classes)
+            time_0 = time.time()
+            losses = train_model(lstm_model, X_train_t, y_train_t, nn.CrossEntropyLoss(), optim.Adam(lstm_model.parameters(), lr=0.001), num_epochs=20)
+            training_time = time.time() - time_0
+            lstm_model.eval()
+            with torch.no_grad():
+                preds = lstm_model(X_test_t).argmax(1).numpy()
+            acc = (preds == y_test_t.numpy()).mean()
+
+            plt.figure(figsize=(12, 4))
+            plt.suptitle(task_type)
+            plt.subplot(1, 3, 1)
+            plt.plot(losses)
+            plt.title("LSTM Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.subplot(1, 3, 2)
+            plt.bar(["LSTM"], [acc])
+            plt.ylim(0, 1)
+            plt.title("LSTM Test Accuracy")
+            plt.ylabel("Accuracy")
+            plt.subplot(1, 3, 3)
+            plt.bar(["LSTM"], [training_time])
+            plt.title("LSTM Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
+
+        if (model == "wave"):
+            w1 = Wavelet_CNN1(X_train_t.shape[1], SFREQ, n_classes)
+            time_0 = time.time()
+            w1_losses = train_model(w1, X_train_t, y_train_t, nn.CrossEntropyLoss(), optim.Adam(w1.parameters(), lr=0.001), num_epochs=20)
+            w1_training_time = time.time() - time_0
+            w1.eval()
+            with torch.no_grad():
+                w1_preds = w1(X_test_t).argmax(1).numpy()
+            w1_acc = (w1_preds == y_test_t.numpy()).mean()
+
+            plt.figure(figsize=(12, 4))
+            plt.suptitle(task_type)
+            plt.subplot(1, 3, 1)
+            plt.plot(w1_losses)
+            plt.title("Wavelet CNN1 Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.subplot(1, 3, 2)
+            plt.bar(["Wavelet CNN1"], [w1_acc])
+            plt.ylim(0, 1)
+            plt.title("Wavelet CNN1 Test Accuracy")
+            plt.ylabel("Accuracy")
+            plt.subplot(1, 3, 3)
+            plt.bar(["Wavelet CNN1"], [w1_training_time])
+            plt.title("Wavelet CNN1 Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
+
+        if (model == "wave2"):
+            w2 = Wavelet_CNN2(X_train_t.shape[1], SFREQ, n_classes)
+            time_0 = time.time()
+            w2_losses = train_model(w2, X_train_t, y_train_t, nn.CrossEntropyLoss(), optim.Adam(w2.parameters(), lr=0.001), num_epochs=20)
+            w2_training_time = time.time() - time_0
+            w2.eval()
+            with torch.no_grad():
+                w2_preds = w2(X_test_t).argmax(1).numpy()
+            w2_acc = (w2_preds == y_test_t.numpy()).mean()
+
+            plt.figure(figsize=(12, 4))
+            plt.suptitle(task_type)
+            plt.subplot(1, 3, 1)
+            plt.plot(w2_losses)
+            plt.title("Wavelet CNN2 Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.subplot(1, 3, 2)
+            plt.bar(["Wavelet CNN2"], [w2_acc])
+            plt.ylim(0, 1)
+            plt.title("Wavelet CNN2 Test Accuracy")
+            plt.ylabel("Accuracy")
+            plt.subplot(1, 3, 3)
+            plt.bar(["Wavelet CNN2"], [w2_training_time])
+            plt.title("Wavelet CNN2 Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
+
+    if task_type == "cross":
+
+        if model == "all":
+            tests = ["test1", "test2", "test3"]
+            context_train = retrieve_context(parent_folder="Final_project_data", subdirectory="Cross", type_of_data="train")
+            X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
+            X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (trials, electrodes, timepoints)
+            print(f"Training data shape after permute: {X_tensor_train.shape}")
+            print(f"Training labels shape: {y_tensor_train.shape}")
+            print(f"Training labels: {list(context_train.labels.values())}")
+
+            X_tensor_tests = []
+
+            for test in tests:
+                context_test = retrieve_context(parent_folder="Final_project_data", subdirectory="Cross", type_of_data=test)
+                X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
+                X_tensor_test = X_tensor_test.permute(0, 2, 1)  # (trials, electrodes, timepoints)
+                X_tensor_tests.append((X_tensor_test, y_tensor_test))
+
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Run CSP-CNN experiments")
-    parser.add_argument("--model", type=str, default="all", choices=["all", "standard", "csp1", "csp2"], help="Which model to run")
-    parser.add_argument("--task", type=str, default = "intra", choices=["intra", "contra"], help = "Which kind of neuroimaging task to learn")
-    args = parser.parse_args()
-    run_and_plot(model=args.model, task_type=args.task)
+    # import argparse
+    # parser = argparse.ArgumentParser(description="Run CSP-CNN experiments")
+    # parser.add_argument("--model", type=str, default="all", choices=["all", "standard", "csp1", "csp2", "transformer", "lstm", "wave", "wave2"], help="Which model to run")
+    # parser.add_argument("--task", type=str, default = "intra", choices=["intra", "contra"], help = "Which kind of neuroimaging task to learn")
+    # args = parser.parse_args()
+    run_and_plot(model="wave", task_type="intra")
