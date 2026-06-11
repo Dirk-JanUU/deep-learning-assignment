@@ -199,6 +199,6 @@ if __name__ == "__main__":
     with torch.no_grad():
         w1_preds = w1(X_test_t).argmax(1).numpy()
     w1_acc = (w1_preds == y_test_t.numpy()).mean()
-    print(f"\nStandard CNN - Training time: {w1_training_time:.2f}s, Test accuracy: {w1_acc:.4f}")
+    print(f"\nWavalet 2 - Training time: {w1_training_time:.2f}s, Test accuracy: {w1_acc:.4f}")
 
 

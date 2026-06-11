@@ -157,8 +157,8 @@ def create_sequences(context: read_data.DataSet, sequence_length: int = 256, ste
     
     return X,y
 
-def convert_data(down_sample, min_max_scaling, create_sequences, context):
-    down_sample(context)
+def convert_data(down_sample, min_max_scaling, create_sequences, context, down_fact = 20):
+    down_sample(context, down_fact)
 
     min_max_scaling(context)
 
