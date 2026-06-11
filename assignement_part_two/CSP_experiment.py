@@ -456,28 +456,125 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.show()
 
     if task_type == "cross":
+         
+        tests = ["test1", "test2", "test3"]
+        context_train = retrieve_context(parent_folder="Final_project_data", subdirectory="Cross", type_of_data="train")
+        X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
+        X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (trials, electrodes, timepoints)
+        print(f"Training data shape after permute: {X_tensor_train.shape}")
+        print(f"Training labels shape: {y_tensor_train.shape}")
+        print(f"Training labels: {list(context_train.labels.values())}")
+
+        n_classes = len(set(context_train.labels.values()))
+
+        X_tensor_tests = []
+        Y_tensor_tests = []
+
+        for test in tests:
+            context_test = retrieve_context(parent_folder="Final_project_data", subdirectory="Cross", type_of_data=test)
+            X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
+            X_tensor_test = X_tensor_test.permute(0, 2, 1)  # (trials, electrodes, timepoints)
+            X_tensor_tests.append(X_tensor_test)
+            Y_tensor_tests.append(y_tensor_test)
 
         if model == "all":
-            tests = ["test1", "test2", "test3"]
-            context_train = retrieve_context(parent_folder="Final_project_data", subdirectory="Cross", type_of_data="train")
-            X_tensor_train, y_tensor_train = convert_data(down_sample, min_max_scaling, create_sequences, context_train)
-            X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (trials, electrodes, timepoints)
-            print(f"Training data shape after permute: {X_tensor_train.shape}")
-            print(f"Training labels shape: {y_tensor_train.shape}")
-            print(f"Training labels: {list(context_train.labels.values())}")
 
-            X_tensor_tests = []
+            # STANDARD CNN
+            std_model = ConvolutionalNeuralNetwork(input_size=X_tensor_train.shape[1], output_size=n_classes)
+            time_0 = time.time()
+            std_losses = train_model(std_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(std_model.parameters(), lr=0.001), num_epochs=20)
+            std_training_time = time.time() - time_0
+            std_model.eval()
+            std_test_accuracies = []
 
-            for test in tests:
-                context_test = retrieve_context(parent_folder="Final_project_data", subdirectory="Cross", type_of_data=test)
-                X_tensor_test, y_tensor_test = convert_data(down_sample, min_max_scaling, create_sequences, context_test)
-                X_tensor_test = X_tensor_test.permute(0, 2, 1)  # (trials, electrodes, timepoints)
-                X_tensor_tests.append((X_tensor_test, y_tensor_test))
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    std_preds = std_model(X_test).argmax(1).numpy()
+                    std_acc = (std_preds == y_test.numpy()).mean()
+                    std_test_accuracies.append(std_acc)
+
+            # TRANSFORMER
+            transformer_model = build_model(input_shape=(X_tensor_train.shape[1], X_tensor_train.shape[2]), head_size=64, num_heads=2, ff_dim=128, num_layers=2, num_classes=4)
+            time_0 = time.time()
+            transformer_model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            history = transformer_model.fit(X_tensor_train, y_tensor_train, epochs=20, batch_size = 1 )
+            transformer_training_time = time.time() - time_0
+            transformer_losses = history.history.get('loss', [])
+            transformer_test_accuracies = []
+
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    transformer_acc = transformer_model.evaluate(X_test, y_test)[1]
+                    transformer_test_accuracies.append(transformer_acc)
+
+            # LSTM
+            X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (batch_size, sequence_length, electrodes)
+            X_tensor_tests = [x.permute(0, 2, 1) for x in X_tensor_tests]
+            lstm_model = LongShortTermMemoryNetwork(input_size=X_tensor_train.shape[2], hidden_size=64, layers=2, output_size=n_classes)
+            time_0 = time.time()
+            lstm_losses = train_model(lstm_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(lstm_model.parameters(), lr=0.001), num_epochs=20)
+            lstm_training_time = time.time() - time_0
+            lstm_model.eval()
+            lstm_test_accuracies = []
+
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    lstm_preds = lstm_model(X_test).argmax(1).numpy()
+                    lstm_acc = (lstm_preds == y_test.numpy()).mean()
+                    lstm_test_accuracies.append(lstm_acc)
+
+            plt.figure(figsize=(15, 4))
+            plt.suptitle(task_type)
+            plt.subplot(1, 3, 1)
+            plt.plot(std_losses, label="Standard CNN")
+            plt.plot(transformer_losses, label="Transformer")
+            plt.plot(lstm_losses, label="LSTM")
+            plt.title("Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.legend()
+            plt.subplot(1, 3, 2)
+            models = ["Standard CNN", "Transformer", "LSTM"]
+            x = np.arange(len(models))
+            width = 0.25
+
+            num_runs = len(std_test_accuracies)
+
+            for i in range(num_runs):
+                plt.bar(
+                    x + (i - (num_runs - 1) / 2) * width,
+                    [
+                        std_test_accuracies[i],
+                        transformer_test_accuracies[i],
+                        lstm_test_accuracies[i],
+                    ],
+                    width,
+                    label=f"Test {i+1}",
+                )
+
+            plt.xticks(x, models)
+            plt.ylim(0, 1)
+            plt.ylabel("Accuracy")
+            plt.title("Test Accuracy")
+            plt.legend()
+            plt.subplot(1, 3, 3)
+            plt.bar(["Standard CNN", "Transformer", "LSTM"], [std_training_time, transformer_training_time, lstm_training_time])
+            plt.title("Training Time")
+            plt.ylabel("Time (s)")
+            plt.tight_layout()
+            plt.show()
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
-    # import argparse
-    # parser = argparse.ArgumentParser(description="Run CSP-CNN experiments")
-    # parser.add_argument("--model", type=str, default="all", choices=["all", "standard", "csp1", "csp2", "transformer", "lstm", "wave", "wave2"], help="Which model to run")
-    # parser.add_argument("--task", type=str, default = "intra", choices=["intra", "contra"], help = "Which kind of neuroimaging task to learn")
-    # args = parser.parse_args()
-    run_and_plot(model="wave", task_type="intra")
+    import argparse
+    parser = argparse.ArgumentParser(description="Run CSP-CNN experiments")
+    parser.add_argument("--model", type=str, default="all", choices=["all", "standard", "csp1", "csp2", "transformer", "lstm", "wave", "wave2"], help="Which model to run")
+    parser.add_argument("--task", type=str, default = "intra", choices=["intra", "contra"], help = "Which kind of neuroimaging task to learn")
+    args = parser.parse_args()
+    run_and_plot(model=args.model, task_type=args.task)
