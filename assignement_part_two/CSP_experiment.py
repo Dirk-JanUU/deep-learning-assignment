@@ -3,12 +3,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from mne.decoding import CSP
-from sklearn.model_selection import train_test_split
 from Wavelet_experiment import Wavelet_CNN1, Wavelet_CNN2
-import read_data
 from LTSM_network import retrieve_context, convert_data, train_model, test_model, create_sequences, down_sample, min_max_scaling, LongShortTermMemoryNetwork
 from CNN_network import ConvolutionalNeuralNetwork
-
 from matplotlib import pyplot as plt
 import time
 
@@ -16,6 +13,22 @@ N_BANDS = 5
 DOWNSAMPLE_FACTOR = 60
 SFREQ = 2034 / DOWNSAMPLE_FACTOR
 
+class MultiLayerPerceptron(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, dropout=0.5):
+        super().__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+        self.fc2 = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        x = x.reshape(x.shape[0], -1)
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return x
+    
 class CSP_CNN1(nn.Module):
     def __init__(self, electrodes, n_classes, n_csp_components, csp_filters, dropout=0.3):
         super().__init__()
@@ -143,6 +156,17 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
         n_timepoints = X_train_t.shape[2]
 
         if model == "all":
+            # standard multi perceptron network
+            mlp_model = MultiLayerPerceptron(input_size=X_train_t.shape[1] * X_train_t.shape[2], hidden_size=64, output_size=n_classes)
+            time_0 = time.time()
+            mlp_losses = train_model(mlp_model, X_train_t, y_train_t, nn.CrossEntropyLoss(), optim.Adam(mlp_model.parameters(), lr=0.001), num_epochs=20)
+            mlp_training_time = time.time() - time_0
+            mlp_model.eval()
+            with torch.no_grad():
+                mlp_preds = mlp_model(X_test_t).argmax(1).numpy()
+            mlp_acc = (mlp_preds == y_test_t.numpy()).mean()
+            print(f"\nMLP - Training time: {mlp_training_time:.2f}s, Test accuracy: {mlp_acc:.4f}")
+
             # Train standard CNN
             std_model = ConvolutionalNeuralNetwork(input_size=X_train_t.shape[1], output_size=n_classes)
             time_0 = time.time()
@@ -157,7 +181,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             # Train LSTM
             X_train_t_ltsm = X_train_t.permute(0, 2, 1)  # (batch_size, sequence_length, electrodes)
             X_test_t_ltsm = X_test_t.permute(0, 2, 1)
-            lstm_model = LongShortTermMemoryNetwork(input_size=X_train_t_ltsm.shape[2], hidden_size=64, layers=2, output_size=n_classes)
+            lstm_model = LongShortTermMemoryNetwork(input_size=X_train_t_ltsm.shape[2], hidden_size=64, layers=2, output_size=n_classes,dropout=0.5)
             time_0 = time.time()
             lstm_losses = train_model(lstm_model, X_train_t_ltsm, y_train_t, nn.CrossEntropyLoss(), optim.Adam(lstm_model.parameters(), lr=0.001), num_epochs=20)
             lstm_training_time = time.time() - time_0
@@ -215,6 +239,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.suptitle(task_type)
             
             plt.subplot(1, 3, 1)
+            plt.plot(mlp_losses, label="MLP")
             plt.plot(std_losses, label="CNN")
             plt.plot(lstm_losses, label="LSTM")
             plt.plot(csp1_losses, label="CSP-1")
@@ -227,13 +252,13 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.legend()
             
             plt.subplot(1, 3, 2)
-            plt.bar(["CNN","LSTM", "CSP-1", "CSP-2", "Wave-1", "Wave-2"], [std_acc, lstm_acc, csp1_acc, csp2_acc, w1_acc, w2_acc])
+            plt.bar(["MLP", "CNN","LSTM", "CSP-1", "CSP-2", "Wave-1", "Wave-2"], [mlp_acc, std_acc, lstm_acc, csp1_acc, csp2_acc, w1_acc, w2_acc])
             plt.ylim(0, 1)
             plt.title("Test Accuracy")
             plt.ylabel("Accuracy")
             
             plt.subplot(1, 3, 3)
-            plt.bar(["CNN", "LSTM", "CSP-1", "CSP-2", "Wave-1", "Wave-2"], [std_training_time, lstm_training_time, csp1_training_time, csp2_training_time, w1_training_time, w2_training_time])
+            plt.bar(["MLP", "CNN", "LSTM", "CSP-1", "CSP-2", "Wave-1", "Wave-2"], [mlp_training_time, std_training_time, lstm_training_time, csp1_training_time, csp2_training_time, w1_training_time, w2_training_time])
             plt.title("Training Time")
             plt.ylabel("Time (s)")
             
@@ -460,6 +485,19 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
 
         if model == "all":
 
+            # MLP
+            mlp_model = MultiLayerPerceptron(input_size=X_tensor_train.shape[1] * X_tensor_train.shape[2], hidden_size=128, output_size=n_classes, dropout=0.5)
+            time_0 = time.time()
+            mlp_losses = train_model(mlp_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(mlp_model.parameters(), lr=0.001), num_epochs=20)
+            mlp_training_time = time.time() - time_0
+            mlp_model.eval()
+            mlp_test_accuracies = []
+            with torch.no_grad():
+                for X_test, y_test in zip(X_tensor_tests, Y_tensor_tests):
+                    mlp_preds = mlp_model(X_test).argmax(dim=1).numpy()
+                    mlp_acc = (mlp_preds == y_test.numpy()).mean()
+                    mlp_test_accuracies.append(mlp_acc)
+
             # STANDARD CNN
             std_model = ConvolutionalNeuralNetwork(input_size=X_tensor_train.shape[1], output_size=n_classes)
             time_0 = time.time()
@@ -477,7 +515,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             # LSTM
             X_tensor_train = X_tensor_train.permute(0, 2, 1)  # (batch_size, sequence_length, electrodes)
             X_tensor_tests = [x.permute(0, 2, 1) for x in X_tensor_tests]
-            lstm_model = LongShortTermMemoryNetwork(input_size=X_tensor_train.shape[2], hidden_size=64, layers=2, output_size=n_classes)
+            lstm_model = LongShortTermMemoryNetwork(input_size=X_tensor_train.shape[2], hidden_size=64, layers=2, output_size=n_classes,dropout=0.5)
             time_0 = time.time()
             lstm_losses = train_model(lstm_model, X_tensor_train, y_tensor_train, nn.CrossEntropyLoss(), optim.Adam(lstm_model.parameters(), lr=0.001), num_epochs=20)
             lstm_training_time = time.time() - time_0
@@ -552,6 +590,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.figure(figsize=(15, 4))
             plt.suptitle(task_type)
             plt.subplot(1, 3, 1)
+            plt.plot(mlp_losses, label="MLP")
             plt.plot(std_losses, label="CNN")
             plt.plot(lstm_losses, label="LSTM")
             plt.plot(csp1_losses, label="CSP-1")
@@ -563,7 +602,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.ylabel("Loss")
             plt.legend()
             plt.subplot(1, 3, 2)
-            models = ["CNN", "LSTM", "CSP-1", "CSP-2", "Wave-1", "Wavel-2"]
+            models = ["MLP", "CNN", "LSTM", "CSP-1", "CSP-2", "Wave-1", "Wave-2"]
             x = np.arange(len(models))
             width = 0.25
 
@@ -573,6 +612,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
                 plt.bar(
                     x + (i - (num_runs - 1) / 2) * width,
                     [
+                        mlp_test_accuracies[i],
                         std_test_accuracies[i],
                         lstm_test_accuracies[i],
                         csp1_test_accuracies[i],
@@ -590,7 +630,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
             plt.title("Test Accuracy")
             plt.legend()
             plt.subplot(1, 3, 3)
-            plt.bar(["CNN", "LSTM", "CSP-1", "CSP-2", "Wave-1", "Wavel-2"], [std_training_time, lstm_training_time, csp1_training_time, csp2_training_time, w1_training_time, w2_training_time])
+            plt.bar(["MLP", "CNN", "LSTM", "CSP-1", "CSP-2", "Wave-1", "Wave-2"], [mlp_training_time, std_training_time, lstm_training_time, csp1_training_time, csp2_training_time, w1_training_time, w2_training_time])
             plt.title("Training Time")
             plt.ylabel("Time (s)")
             plt.tight_layout()
@@ -695,7 +735,7 @@ def run_and_plot(model = "all", task_type = "intra",  N_CSP = 4, downsample_fact
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run CSP-CNN experiments")
-    parser.add_argument("--model", type=str, default="all", choices=["all", "standard", "csp1", "csp2", "lstm", "wave", "wave2"], help="Which model to run")
+    parser.add_argument("--model", type=str, default="all", choices=["all", "standard", "csp1", "csp2", "lstm", "wave", "wave2", "mlp"], help="Which model to run")
     parser.add_argument("--task", type=str, default = "intra", choices=["intra", "contra"], help = "Which kind of neuroimaging task to learn")
     args = parser.parse_args()
     run_and_plot(model="all", task_type="intra")
