@@ -9,7 +9,7 @@ from CNN_network import ConvolutionalNeuralNetwork
 
 from read_data import DataSet
 
-from LTSM_network import create_sequences, retrieve_context, convert_data, down_sample, min_max_scaling
+from LTSM_network import create_sequences, convert_data, down_sample, min_max_scaling
 from LTSM_network import train_model, test_model, LongShortTermMemoryNetwork
 
 import torch

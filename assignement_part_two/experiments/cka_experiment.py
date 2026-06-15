@@ -3,7 +3,6 @@ import copy
 import itertools
 
 import torch
-from torch.utils.data import DataLoader, TensorDataset
 import torch.nn as nn
 import torch.optim as optim
 from mne.decoding import CSP
@@ -13,8 +12,8 @@ from ckatorch.core import cka_base
 from ckatorch.plot import plot_cka
 
 from CNN_network import ConvolutionalNeuralNetwork
-from CSP_experiment import CSP_CNN1, CSP_CNN2
-from Wavelet_experiment import Wavelet_CNN1, Wavelet_CNN2
+from experiments.CSP_experiment import CSP_CNN1, CSP_CNN2
+from experiments.Wavelet_experiment import Wavelet_CNN1, Wavelet_CNN2
 from LTSM_network import (retrieve_context, convert_data, create_sequences,
                           down_sample, min_max_scaling, train_model)
 

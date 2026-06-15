@@ -1,8 +1,6 @@
 import matplotlib.pyplot as plt
-from transformer import build_model
-from LTSM_experiment import convert_data, retrieve_context, min_max_scaling, down_sample, create_sequences, train_model
+from experiments.LTSM_experiment import convert_data, retrieve_context, min_max_scaling, down_sample, create_sequences, train_model
 import torch.optim as optim
-import time
 import torch
 import numpy as np
 from CNN_network import ConvolutionalNeuralNetwork

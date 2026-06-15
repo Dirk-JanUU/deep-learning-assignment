@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from LTSM_experiment import retrieve_context, convert_data, min_max_scaling, down_sample, create_sequences, train_model, test_model
+from experiments.LTSM_experiment import retrieve_context, convert_data, min_max_scaling, down_sample, create_sequences, train_model, test_model
 import time
 
 N_BANDS = 5

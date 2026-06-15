@@ -1,8 +1,0 @@
-Test Loss: 0.0002, Accuracy: 1.0000 guided
-Test Loss: 0.0001, Accuracy: 1.0000 cnn
-
-Test Loss: 0.0001, Accuracy: 1.0000 guided
-Test Loss: 0.0005, Accuracy: 1.0000 cnn
-
-Test Loss: 0.0001, Accuracy: 1.0000 guided
-Test Loss: 0.0003, Accuracy: 1.0000 cnn

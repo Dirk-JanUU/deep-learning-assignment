@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from mne.decoding import CSP
-from Wavelet_experiment import Wavelet_CNN1, Wavelet_CNN2
+from experiments.Wavelet_experiment import Wavelet_CNN1, Wavelet_CNN2
 from LTSM_network import retrieve_context, convert_data, train_model, test_model, create_sequences, down_sample, min_max_scaling, LongShortTermMemoryNetwork
 from CNN_network import ConvolutionalNeuralNetwork
 from matplotlib import pyplot as plt
