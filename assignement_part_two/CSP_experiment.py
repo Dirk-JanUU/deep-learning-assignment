@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 import time
 
 N_BANDS = 5
-DOWNSAMPLE_FACTOR = 60
+DOWNSAMPLE_FACTOR = 80
 SFREQ = 2034 / DOWNSAMPLE_FACTOR
 
 class MultiLayerPerceptron(nn.Module):
@@ -738,7 +738,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="all", choices=["all", "standard", "csp1", "csp2", "lstm", "wave", "wave2", "mlp"], help="Which model to run")
     parser.add_argument("--task", type=str, default = "intra", choices=["intra", "contra"], help = "Which kind of neuroimaging task to learn")
     args = parser.parse_args()
-    run_and_plot(model="all", task_type="intra")
+    run_and_plot(model="all", task_type="cross")
 
 
 
